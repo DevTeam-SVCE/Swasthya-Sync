@@ -1,0 +1,12 @@
+node_modules
+server/node_modules
+dist
+
+# Only exclude the dev-only override files — .env itself must stay in the
+# build context since the production image reads its config from it.
+.env.local
+.env.*.local
+server/.env.local
+server/.env.*.local
+
+.git
