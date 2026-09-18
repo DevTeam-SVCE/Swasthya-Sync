@@ -1,0 +1,38 @@
+.page { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-6); max-width: 1600px; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); flex-wrap: wrap; }
+.title { color: var(--color-text-primary); font-size: var(--text-3xl); font-weight: var(--font-bold); }
+.subtitle { color: var(--color-text-secondary); font-size: var(--text-sm); margin-top: var(--space-1); }
+.backLink { display: inline-block; color: var(--color-primary); font-size: var(--text-sm); font-weight: var(--font-semibold); margin-top: var(--space-2); text-decoration: none; }
+.layout { display: grid; grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.5fr); gap: var(--space-5); min-height: 650px; }
+.focusedLayout { display: block; }
+.panel { overflow: hidden; }
+.panelHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-5); border-bottom: 1px solid var(--color-border); }
+.sectionTitle { color: var(--color-text-primary); font-size: var(--text-lg); font-weight: var(--font-semibold); }
+.sectionSubtitle { color: var(--color-text-secondary); font-size: var(--text-xs); margin-top: 3px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+.search { grid-column: 1 / -1; }
+.list { max-height: 560px; overflow-y: auto; }
+.template { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--color-border); background: var(--color-bg-surface); padding: var(--space-4); text-align: left; cursor: pointer; }
+.template:hover, .templateActive { background: var(--color-primary-50); }
+.templateName { color: var(--color-text-primary); font-size: var(--text-sm); font-weight: var(--font-semibold); }
+.templateMeta { color: var(--color-text-secondary); font-size: var(--text-xs); margin-top: 5px; }
+.viewer { display: flex; flex-direction: column; min-height: 650px; }
+.viewerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-5); border-bottom: 1px solid var(--color-border); }
+.viewerActions { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+.pdf { flex: 1; width: 100%; min-height: 620px; border: 0; background: var(--color-gray-100); }
+.pdfStage { position: relative; min-height: 620px; background: var(--color-gray-100); }
+.pdfStage .pdf { display: block; position: relative; z-index: 1; }
+.annotationCanvas { position: absolute; inset: 0; z-index: 2; width: 100%; height: 620px; cursor: crosshair; touch-action: none; }
+.patientHeaderOverlay { position: absolute; top: 14px; left: 14px; right: 14px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 10px; background: rgba(255, 255, 255, 0.94); border: 1px solid var(--color-primary-200); border-radius: var(--radius-sm); color: var(--color-text-primary); font-size: 11px; pointer-events: none; }
+.patientHeaderOverlay strong { width: 100%; font-size: 12px; }
+.empty { display: grid; place-items: center; min-height: 420px; padding: var(--space-8); color: var(--color-text-secondary); text-align: center; }
+.formArea { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); border-top: 1px solid var(--color-border); }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.formActions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.history { border-top: 1px solid var(--color-border); padding: var(--space-5); }
+.historyRow { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); }
+.historyRow:last-child { border-bottom: 0; }
+.muted { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.error { color: var(--color-danger-700); background: var(--color-danger-bg); border: 1px solid var(--color-danger-border); border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-sm); }
+@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } .list { max-height: 360px; } }
+@media (max-width: 600px) { .page { padding: var(--space-4); } .controls, .formGrid { grid-template-columns: 1fr; } .search { grid-column: auto; } .viewerHeader { flex-direction: column; } .viewerActions { justify-content: flex-start; } }

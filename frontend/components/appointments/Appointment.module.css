@@ -1,0 +1,43 @@
+.page { padding: var(--space-6); max-width: 1500px; display: flex; flex-direction: column; gap: var(--space-5); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.title { color: var(--color-text-primary); font-size: var(--text-3xl); font-weight: var(--font-bold); }
+.subtitle { color: var(--color-text-secondary); font-size: var(--text-sm); margin-top: var(--space-1); }
+.actions, .actionGroup { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.card { background: var(--color-bg-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-xs); }
+.toolbar { align-items: end; display: grid; gap: var(--space-3); grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(140px, .5fr)); padding: var(--space-4); }
+.tableWrap { overflow-x: auto; }
+.table { border-collapse: collapse; min-width: 1050px; width: 100%; }
+.table th { background: var(--color-gray-50); border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: var(--text-xs); font-weight: var(--font-semibold); padding: var(--space-3) var(--space-4); text-align: left; text-transform: uppercase; white-space: nowrap; }
+.table td { border-bottom: 1px solid var(--color-border); color: var(--color-text-primary); font-size: var(--text-sm); padding: var(--space-3) var(--space-4); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover { background: var(--color-primary-50); }
+.link { color: var(--color-primary); font-weight: var(--font-semibold); text-decoration: none; }
+.link:hover { text-decoration: underline; }
+.muted { color: var(--color-text-secondary); }
+.empty { color: var(--color-text-secondary); padding: var(--space-10); text-align: center; }
+.error { background: var(--color-danger-bg); border: 1px solid var(--color-danger-border); border-radius: var(--radius-lg); color: var(--color-danger-700); font-size: var(--text-sm); padding: var(--space-3) var(--space-4); }
+.stepper { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); padding: var(--space-5); border-bottom: 1px solid var(--color-border); }
+.step { align-items: center; color: var(--color-text-tertiary); display: flex; font-size: var(--text-sm); font-weight: var(--font-medium); gap: var(--space-2); }
+.stepNumber { align-items: center; border: 1px solid var(--color-border-strong); border-radius: var(--radius-full); display: flex; height: 28px; justify-content: center; width: 28px; flex-shrink: 0; }
+.step--active, .step--complete { color: var(--color-primary); }
+.step--active .stepNumber, .step--complete .stepNumber { background: var(--color-primary); border-color: var(--color-primary); color: white; }
+.formBody { padding: var(--space-5); }
+.formGrid { display: grid; gap: var(--space-4); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sectionTitle { color: var(--color-text-primary); font-size: var(--text-lg); font-weight: var(--font-semibold); margin-bottom: var(--space-4); }
+.formFooter { border-top: 1px solid var(--color-border); display: flex; justify-content: space-between; padding: var(--space-4) var(--space-5); }
+.slotGrid { display: grid; gap: var(--space-2); grid-template-columns: repeat(4, minmax(100px, 1fr)); margin-top: var(--space-3); }
+.slot { background: var(--color-bg-subtle); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-primary); cursor: pointer; font: inherit; padding: var(--space-3); }
+.slot:hover, .slot--selected { background: var(--color-primary-50); border-color: var(--color-primary); color: var(--color-primary-700); }
+.slot:disabled { background: var(--color-gray-100); color: var(--color-text-disabled); cursor: not-allowed; text-decoration: line-through; }
+.selectedPatient { background: var(--color-primary-50); border: 1px solid var(--color-primary-200); border-radius: var(--radius-lg); display: grid; gap: var(--space-2); grid-template-columns: repeat(4, 1fr); margin-top: var(--space-3); padding: var(--space-4); }
+.patientSearch { display: flex; gap: var(--space-2); align-items: end; }
+.patientResults { border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-top: var(--space-2); max-height: 210px; overflow-y: auto; }
+.patientResult { background: var(--color-bg-surface); border: 0; border-bottom: 1px solid var(--color-border); cursor: pointer; display: flex; justify-content: space-between; padding: var(--space-3); text-align: left; width: 100%; }
+.patientResult:hover { background: var(--color-primary-50); }
+.detailGrid { display: grid; gap: var(--space-4); grid-template-columns: repeat(3, 1fr); }
+.detailItem { display: flex; flex-direction: column; gap: var(--space-1); }
+.detailLabel { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.detailValue { color: var(--color-text-primary); font-size: var(--text-sm); font-weight: var(--font-medium); }
+.opdReady { background: var(--color-success-bg); border: 1px solid var(--color-success-border); border-radius: var(--radius-lg); color: var(--color-success-700); padding: var(--space-3) var(--space-4); font-size: var(--text-sm); }
+@media (max-width: 1000px) { .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .selectedPatient, .detailGrid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .page { padding: var(--space-4); } .toolbar, .formGrid, .selectedPatient, .detailGrid { grid-template-columns: 1fr; } .stepper { grid-template-columns: repeat(4, minmax(150px, 1fr)); overflow-x: auto; } .slotGrid { grid-template-columns: repeat(2, 1fr); } .formFooter { flex-direction: column; gap: var(--space-3); } }

@@ -1,0 +1,137 @@
+/* ── Badge base ──────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-medium);
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+/* Sizes */
+.badge--sm  { font-size: var(--text-xs); padding: 2px var(--space-2); }
+.badge--md  { font-size: var(--text-xs); padding: 3px var(--space-2-5); }
+.badge--lg  { font-size: var(--text-sm); padding: var(--space-1) var(--space-3); }
+
+/* ── Variants ────────────────────────────────────────────── */
+.badge--default {
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-700);
+  border-color: var(--color-gray-200);
+}
+
+.badge--primary {
+  background-color: var(--color-primary-100);
+  color: var(--color-primary-800);
+  border-color: var(--color-primary-200);
+}
+
+.badge--success {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-700);
+  border-color: var(--color-success-border);
+}
+
+.badge--danger {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-700);
+  border-color: var(--color-danger-border);
+}
+
+.badge--warning {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-700);
+  border-color: var(--color-warning-border);
+}
+
+.badge--info {
+  background-color: var(--color-info-bg);
+  color: var(--color-info-700);
+  border-color: var(--color-info-border);
+}
+
+.badge--purple {
+  background-color: var(--color-primary-100);
+  color: var(--color-primary-700);
+  border-color: var(--color-primary-200);
+}
+
+/* ── Triage ──────────────────────────────────────────────── */
+.badge--triage-red {
+  background-color: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+.badge--triage-orange {
+  background-color: #fff7ed;
+  color: #9a3412;
+  border-color: #fed7aa;
+}
+.badge--triage-yellow {
+  background-color: #fefce8;
+  color: #854d0e;
+  border-color: #fef08a;
+}
+.badge--triage-green {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-700);
+  border-color: var(--color-success-border);
+}
+
+/* ── Bed Status ──────────────────────────────────────────── */
+.badge--bed-available {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-700);
+  border-color: var(--color-success-border);
+}
+.badge--bed-occupied {
+  background-color: var(--color-primary-100);
+  color: var(--color-primary-800);
+  border-color: var(--color-primary-200);
+}
+.badge--bed-reserved {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-700);
+  border-color: var(--color-warning-border);
+}
+.badge--bed-maintenance {
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-600);
+  border-color: var(--color-gray-200);
+}
+
+/* ── Invoice Status ──────────────────────────────────────── */
+.badge--invoice-paid {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-700);
+  border-color: var(--color-success-border);
+}
+.badge--invoice-pending {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-700);
+  border-color: var(--color-warning-border);
+}
+.badge--invoice-partial {
+  background-color: var(--color-info-bg);
+  color: var(--color-info-700);
+  border-color: var(--color-info-border);
+}
+.badge--invoice-overdue {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-700);
+  border-color: var(--color-danger-border);
+}
+
+/* ── Dot ─────────────────────────────────────────────────── */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: currentColor;
+  flex-shrink: 0;
+}
+.dot--pulse {
+  animation: pulseDot 1.4s ease-in-out infinite;
+}

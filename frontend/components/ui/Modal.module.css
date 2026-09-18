@@ -1,0 +1,103 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  padding: var(--space-4);
+  animation: fadeIn 150ms ease;
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  background-color: var(--color-bg-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-2xl);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--space-8));
+  width: 100%;
+  animation: scaleIn 180ms ease;
+  overflow: hidden;
+}
+
+/* Sizes */
+.dialog--sm   { max-width: 400px; }
+.dialog--md   { max-width: 560px; }
+.dialog--lg   { max-width: 720px; }
+.dialog--xl   { max-width: 960px; }
+.dialog--full {
+  max-width: calc(100vw - var(--space-8));
+  height: calc(100vh - var(--space-8));
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  gap: var(--space-3);
+}
+
+.headerText { flex: 1; min-width: 0; }
+
+.title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-1);
+}
+
+.closeBtn {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary) !important;
+  margin-top: -2px;
+}
+.closeBtn:hover { color: var(--color-text-primary) !important; }
+
+/* Body */
+.body {
+  padding: var(--space-6);
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--color-border);
+  background-color: var(--color-bg-subtle);
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .dialog--sm,
+  .dialog--md,
+  .dialog--lg,
+  .dialog--xl {
+    max-width: 100%;
+    margin: 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-height: 90vh;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+  .overlay { align-items: flex-end; padding: 0; }
+}

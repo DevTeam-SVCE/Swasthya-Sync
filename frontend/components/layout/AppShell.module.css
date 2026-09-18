@@ -1,0 +1,41 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--color-bg-base);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Allow each page to define its own padding via .page-content */
+}
+
+/* ── Skip navigation link (accessibility) ────────────────── */
+.shell:focus-within .skipLink:focus {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  padding: var(--space-3) var(--space-6);
+  background: var(--color-primary);
+  color: white;
+  border-radius: var(--radius-lg);
+  font-weight: var(--font-semibold);
+  font-size: var(--text-base);
+  text-decoration: none;
+  box-shadow: var(--shadow-lg);
+}
+
+@media (max-width: 768px) {
+  .shell { flex-direction: column; }
+}

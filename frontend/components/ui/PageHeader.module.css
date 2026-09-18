@@ -1,0 +1,99 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
+  background-color: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+  position: relative;
+}
+
+/* Accent left bar */
+.root--accent-primary::before  { background-color: var(--color-primary); }
+.root--accent-success::before  { background-color: var(--color-success); }
+.root--accent-danger::before   { background-color: var(--color-danger); }
+.root--accent-warning::before  { background-color: var(--color-warning); }
+.root--accent-info::before     { background-color: var(--color-info); }
+
+.root--accent-primary::before,
+.root--accent-success::before,
+.root--accent-danger::before,
+.root--accent-warning::before,
+.root--accent-info::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+/* Breadcrumb row */
+.breadcrumbRow {
+  margin-bottom: var(--space-1);
+}
+
+/* Main row */
+.main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.iconWrap {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-primary-100);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text-primary);
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-0-5);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* Meta row */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-1);
+}
+
+@media (max-width: 640px) {
+  .main { flex-direction: column; align-items: flex-start; }
+  .actions { width: 100%; }
+}

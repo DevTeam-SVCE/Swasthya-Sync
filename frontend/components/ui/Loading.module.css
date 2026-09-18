@@ -1,0 +1,118 @@
+/* ── Spinner ─────────────────────────────────────────────── */
+.spinner {
+  display: inline-block;
+  border-style: solid;
+  border-radius: var(--radius-full);
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Sizes */
+.spinner--xs  { width: 12px; height: 12px; border-width: 2px; }
+.spinner--sm  { width: 16px; height: 16px; border-width: 2px; }
+.spinner--md  { width: 22px; height: 22px; border-width: 2px; }
+.spinner--lg  { width: 32px; height: 32px; border-width: 3px; }
+.spinner--xl  { width: 44px; height: 44px; border-width: 4px; }
+
+/* Colors */
+.spinner--primary {
+  border-color: var(--color-primary-200);
+  border-top-color: var(--color-primary);
+}
+.spinner--white {
+  border-color: rgba(255,255,255,0.3);
+  border-top-color: #ffffff;
+}
+.spinner--muted {
+  border-color: var(--color-gray-200);
+  border-top-color: var(--color-gray-400);
+}
+
+/* ── Page Spinner ────────────────────────────────────────── */
+.pageSpinner {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-bg-base);
+  z-index: var(--z-overlay);
+}
+
+.pageSpinnerInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.pageSpinnerLogo {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-600));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+}
+
+.pageSpinnerLogoText {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  color: white;
+  font-family: var(--font-sans);
+}
+
+.pageSpinnerMessage {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-2);
+}
+
+/* ── Skeleton ────────────────────────────────────────────── */
+.skeletonLine,
+.skeletonBlock {
+  border-radius: var(--radius-md);
+}
+
+/* ── Card skeleton ───────────────────────────────────────── */
+.cardSkeleton {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.cardSkeletonHeader {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cardSkeletonBody {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── Table skeleton ──────────────────────────────────────── */
+.tableSkeleton {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.tableSkeletonRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tableSkeletonRow:last-child { border-bottom: none; }
