@@ -1,8 +1,14 @@
 // src/api.js — Centralised API client
 // All frontend pages import from here — change BASE_URL once to point to your server
-export const BASE_URL = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api'
-export const SERVER_URL = import.meta.env.PROD ? '' : 'http://localhost:5000'
+const RENDER_URL = 'https://swasthya-sync.onrender.com'
 
+export const BASE_URL = import.meta.env.PROD 
+  ? `${RENDER_URL}/api` 
+  : 'http://localhost:5000/api'
+
+export const SERVER_URL = import.meta.env.PROD 
+  ? RENDER_URL 
+  : 'http://localhost:5000'
 function getToken() {
   return localStorage.getItem('swasthyasync_token')
 }
