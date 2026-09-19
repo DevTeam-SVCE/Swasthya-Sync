@@ -362,11 +362,10 @@ app.delete('/api/patients/:id', requireAuth, async (req, res) => {
 })
 
 // Local Server Start / Vercel Serverless Export
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000
-  app.listen(PORT, '0.0.0.0', () => {
+// Server Listener for Render / Traditional Hosting
+const PORT = process.env.PORT || 5000
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`)
 })
-}
 
 export default app
