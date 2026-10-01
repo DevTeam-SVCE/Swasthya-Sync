@@ -44,6 +44,7 @@ import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { useAuth } from "@/context/AuthContext";
+import { canAccessPath, normalizeUserRole } from "@/lib/permissions";
 import { fetchAppointments } from "@/lib/appointments";
 import { fetchEmergencyQueue, type EmergencyEncounter } from "@/lib/emergency";
 import { fetchAdmissions, fetchBeds, fetchIPDOverview } from "@/lib/ipd";
@@ -194,8 +195,15 @@ function LiveOperations() {
 }
 
 function ModuleLauncher() {
+  const { user } = useAuth();
   const [activeCategory, setActiveCategory] = useState(DASHBOARD_MODULE_CATEGORIES[0].key);
-  const category = DASHBOARD_MODULE_CATEGORIES.find((item) => item.key === activeCategory) ?? DASHBOARD_MODULE_CATEGORIES[0];
+  const visibleCategories = DASHBOARD_MODULE_CATEGORIES.map((item) => ({
+    ...item,
+    modules: item.modules.filter((module) => module.href ? canAccessPath(user?.role, module.href) : normalizeUserRole(user?.role) === "admin"),
+  })).filter((item) => item.modules.length > 0);
+  const category = visibleCategories.find((item) => item.key === activeCategory) ?? visibleCategories[0];
+
+  if (!category) return null;
 
   return (
     <section className={styles.launcher} aria-labelledby="module-launcher-title">
@@ -205,10 +213,10 @@ function ModuleLauncher() {
           <h2 id="module-launcher-title" className={styles.sectionTitle}>Module Launcher</h2>
           <p className={styles.sectionSubtitle}>Move between hospital workflows from one place.</p>
         </div>
-        <span className={styles.launcherCount}>{DASHBOARD_MODULE_CATEGORIES.length} categories</span>
+        <span className={styles.launcherCount}>{visibleCategories.length} categories</span>
       </div>
       <div className={styles.launcherTabs} role="tablist" aria-label="Dashboard module categories">
-        {DASHBOARD_MODULE_CATEGORIES.map((item) => {
+        {visibleCategories.map((item) => {
           const Icon = item.icon;
           const active = item.key === category.key;
           return (

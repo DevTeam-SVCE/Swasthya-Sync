@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "test": "node --test tests/permissions.test.js tests/staff.test.js tests/kmh-staff-import.test.js",
+    "import:kmh-staff": "node src/import-kmh-staff.js"
   },
   "dependencies": {
     "@prisma/client": "^7.10.0",

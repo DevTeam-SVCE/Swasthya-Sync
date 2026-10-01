@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Badge } from "@/components/ui/Badge";
+import { canAccessModule, roleDisplayName } from "@/lib/permissions";
 import styles from "./Topbar.module.css";
 
 const DEMO_NOTIFICATIONS = [
@@ -150,7 +151,7 @@ export function Topbar() {
             <div className={styles.profileMeta}>
               <span className={styles.profileName}>{user?.name ?? "User"}</span>
               <span className={styles.profileRole}>
-                {user?.role === "admin" ? "Admin" : "Staff"}
+                {roleDisplayName(user?.role)}
               </span>
             </div>
             <ChevronDown
@@ -192,33 +193,35 @@ export function Topbar() {
                 <div className={styles.profileDropdownRole}>
                   <Shield size={13} aria-hidden="true" />
                   <span>
-                    {user?.role === "admin" ? "Administrator" : "Staff Member"}
+                    {roleDisplayName(user?.role)}
                   </span>
                 </div>
 
                 <div className={styles.dropdownDivider} />
 
                 <ul className={styles.menuList}>
-                  <li>
-                    <Link
-                      href="/settings/profile"
-                      className={styles.menuItem}
-                      onClick={() => setProfileOpen(false)}
-                    >
-                      <User size={14} aria-hidden="true" />
-                      My Profile
-                    </Link>
-                  </li>
-                  <li>
-                    <Link
-                      href="/settings"
-                      className={styles.menuItem}
-                      onClick={() => setProfileOpen(false)}
-                    >
-                      <Settings size={14} aria-hidden="true" />
-                      Settings
-                    </Link>
-                  </li>
+                  {canAccessModule(user?.role, "settings") && <>
+                    <li>
+                      <Link
+                        href="/settings/profile"
+                        className={styles.menuItem}
+                        onClick={() => setProfileOpen(false)}
+                      >
+                        <User size={14} aria-hidden="true" />
+                        My Profile
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        href="/settings"
+                        className={styles.menuItem}
+                        onClick={() => setProfileOpen(false)}
+                      >
+                        <Settings size={14} aria-hidden="true" />
+                        Settings
+                      </Link>
+                    </li>
+                  </>}
                 </ul>
 
                 <div className={styles.dropdownDivider} />

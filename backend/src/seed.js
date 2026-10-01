@@ -91,11 +91,19 @@ async function seed() {
   ];
   for (const user of users) {
     const passwordHash = await bcrypt.hash(user.password, 12);
-    await query(
+    const savedUser = await query(
       `INSERT INTO users (hospital_id, name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, active = TRUE`,
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, active = TRUE
+       RETURNING id`,
       [hospitalId, user.name, user.email, passwordHash, user.role]
+    );
+    await query(
+      `INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, status)
+       VALUES ($1, $2, $3, $4, $5, 'ACTIVE')
+       ON CONFLICT (user_id) DO UPDATE
+       SET hospital_id = EXCLUDED.hospital_id, full_name = EXCLUDED.full_name, role = EXCLUDED.role, updated_at = NOW()`,
+      [savedUser.rows[0].id, hospitalId, user.name, user.role, `SEED-${user.role}`]
     );
   }
 

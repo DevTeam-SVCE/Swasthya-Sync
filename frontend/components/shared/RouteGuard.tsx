@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { PageSpinner } from "@/components/ui/Loading";
 import type { UserRole } from "@/types/auth";
+import { canAccessPath, normalizeUserRole } from "@/lib/permissions";
 
 interface RouteGuardProps {
   children: React.ReactNode;
@@ -16,10 +17,8 @@ export function RouteGuard({ children, requiredRole }: RouteGuardProps) {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const adminOnlyPath = ["/staff", "/form-templates", "/audit-log"].some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`)
-  );
-  const deniedByRole = adminOnlyPath && user?.role !== "admin";
+  const deniedByRole = !canAccessPath(user?.role, pathname);
+  const deniedByRequiredRole = !!requiredRole && normalizeUserRole(user?.role) !== normalizeUserRole(requiredRole);
 
   useEffect(() => {
     if (isLoading) return;
@@ -27,14 +26,14 @@ export function RouteGuard({ children, requiredRole }: RouteGuardProps) {
       router.replace("/login");
       return;
     }
-    if ((requiredRole && user?.role !== requiredRole) || deniedByRole) {
+    if (deniedByRequiredRole || deniedByRole) {
       router.replace("/dashboard");
     }
-  }, [isAuthenticated, isLoading, requiredRole, user, deniedByRole, router]);
+  }, [isAuthenticated, isLoading, deniedByRequiredRole, deniedByRole, router]);
 
   if (isLoading) return <PageSpinner message="Verifying session…" />;
   if (!isAuthenticated) return <PageSpinner message="Redirecting…" />;
-  if ((requiredRole && user?.role !== requiredRole) || deniedByRole) {
+  if (deniedByRequiredRole || deniedByRole) {
     return <PageSpinner message="Access denied…" />;
   }
 

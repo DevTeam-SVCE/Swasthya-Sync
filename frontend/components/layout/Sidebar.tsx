@@ -10,6 +10,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { NAV_GROUPS } from "@/lib/nav";
+import { canAccessPath, roleDisplayName } from "@/lib/permissions";
 import { useAuth } from "@/context/AuthContext";
 import styles from "./Sidebar.module.css";
 
@@ -25,9 +26,7 @@ export function Sidebar() {
 
   const visibleGroups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter(
-      (item) => !item.adminOnly || user?.role === "admin"
-    ),
+    items: group.items.filter((item) => canAccessPath(user?.role, item.href)),
   })).filter((group) => group.items.length > 0);
 
   return (
@@ -121,7 +120,7 @@ export function Sidebar() {
             <div className={styles.userMeta}>
               <span className={styles.userName}>{user?.name ?? "User"}</span>
               <span className={styles.userRole}>
-                {user?.role === "admin" ? "Administrator" : "Staff"}
+                {roleDisplayName(user?.role)}
               </span>
             </div>
           )}
