@@ -1,6 +1,7 @@
 .shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background-color: var(--color-bg-base);
 }
 
@@ -16,7 +17,6 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  /* Allow each page to define its own padding via .page-content */
 }
 
 /* ── Skip navigation link (accessibility) ────────────────── */

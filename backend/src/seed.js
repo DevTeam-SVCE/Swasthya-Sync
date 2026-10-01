@@ -9,8 +9,8 @@ async function seed() {
     "SELECT hospital_id AS id FROM users WHERE email = $1 LIMIT 1",
     ["admin@swasthyasync.com"]
   );
-  const existingHospital = await query("SELECT id FROM hospitals WHERE name = $1 ORDER BY created_at ASC LIMIT 1", ["City General Hospital"]);
-  const hospital = assignedHospital.rows[0] ?? existingHospital.rows[0] ?? (await query("INSERT INTO hospitals (name) VALUES ($1) RETURNING id", ["City General Hospital"])).rows[0];
+  const existingHospital = await query("SELECT id FROM hospitals WHERE name = $1 ORDER BY created_at ASC LIMIT 1", ["Cura Hospitals"]);
+  const hospital = assignedHospital.rows[0] ?? existingHospital.rows[0] ?? (await query("INSERT INTO hospitals (name) VALUES ($1) RETURNING id", ["Cura Hospitals"])).rows[0];
   let hospitalId = hospital.id;
 
   const users = [

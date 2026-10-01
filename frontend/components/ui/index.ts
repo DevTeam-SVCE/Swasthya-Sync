@@ -44,3 +44,5 @@ export type { PageHeaderProps } from "./PageHeader";
 
 export { Breadcrumb } from "./Breadcrumb";
 export type { BreadcrumbProps, BreadcrumbItem } from "./Breadcrumb";
+
+export { PdfStage } from "./PdfStage";

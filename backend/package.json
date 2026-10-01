@@ -9,6 +9,7 @@
     "seed": "node src/seed.js"
   },
   "dependencies": {
+    "@prisma/client": "^7.10.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -16,5 +17,11 @@
     "jsonwebtoken": "^9.0.2",
     "pdfkit": "^0.20.2",
     "pg": "^8.16.3"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true
+  },
+  "devDependencies": {
+    "prisma": "^8.0.0-rc.19"
   }
 }

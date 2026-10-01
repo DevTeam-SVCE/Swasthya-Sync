@@ -16,13 +16,11 @@
 .template:hover, .templateActive { background: var(--color-primary-50); }
 .templateName { color: var(--color-text-primary); font-size: var(--text-sm); font-weight: var(--font-semibold); }
 .templateMeta { color: var(--color-text-secondary); font-size: var(--text-xs); margin-top: 5px; }
-.viewer { display: flex; flex-direction: column; min-height: 650px; }
+.viewer { display: flex; flex-direction: column; }
 .viewerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-5); border-bottom: 1px solid var(--color-border); }
 .viewerActions { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
-.pdf { flex: 1; width: 100%; min-height: 620px; border: 0; background: var(--color-gray-100); }
-.pdfStage { position: relative; min-height: 620px; background: var(--color-gray-100); }
-.pdfStage .pdf { display: block; position: relative; z-index: 1; }
-.annotationCanvas { position: absolute; inset: 0; z-index: 2; width: 100%; height: 620px; cursor: crosshair; touch-action: none; }
+/* PdfStage sits here — its height is controlled in PdfStage.module.css */
+.annotationCanvas { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; cursor: crosshair; touch-action: none; pointer-events: none; }
 .patientHeaderOverlay { position: absolute; top: 14px; left: 14px; right: 14px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 10px; background: rgba(255, 255, 255, 0.94); border: 1px solid var(--color-primary-200); border-radius: var(--radius-sm); color: var(--color-text-primary); font-size: 11px; pointer-events: none; }
 .patientHeaderOverlay strong { width: 100%; font-size: 12px; }
 .empty { display: grid; place-items: center; min-height: 420px; padding: var(--space-8); color: var(--color-text-secondary); text-align: center; }
