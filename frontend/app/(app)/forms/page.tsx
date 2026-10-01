@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { FileText, Search, UserPlus } from "lucide-react";
+import { FileText, ListChecks, Plus, Search, UserPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -47,6 +47,10 @@ export default function FormsPage() {
   const [saving, setSaving] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState("Ready");
   const [error, setError] = useState("");
+  const [checklist, setChecklist] = useState<FormTemplate[]>([]);
+  const [customItems, setCustomItems] = useState<{ id: string; label: string }[]>([]);
+  const [customLabel, setCustomLabel] = useState("");
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   function openPatientFormState(form: PatientForm) {
     setCurrentForm(form);
@@ -157,10 +161,42 @@ export default function FormsPage() {
 
   const categories = useMemo(() => Array.from(new Set(templates.map((item) => item.category))).sort(), [templates]);
   const subcategories = useMemo(() => Array.from(new Set(templates.filter((item) => !category || item.category === category).map((item) => item.subcategory).filter(Boolean) as string[])).sort(), [templates, category]);
+  const checkedIds = useMemo(() => new Set(checklist.map((item) => item.id)), [checklist]);
+  const shownCheckedCount = templates.filter((item) => checkedIds.has(item.id)).length;
+  const allShownChecked = templates.length > 0 && shownCheckedCount === templates.length;
+  const checklistCount = checklist.length + customItems.length;
   const formTitle = useMemo(() => {
     const title = selectedTemplate?.name ?? "Form";
     return title.trim().replace(/\s+/g, " ").replace(/\s*\([^)]*\)/g, "").replace(/\s+/g, " ").toUpperCase();
   }, [selectedTemplate]);
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = shownCheckedCount > 0 && !allShownChecked;
+  }, [shownCheckedCount, allShownChecked]);
+
+  const toggleChecklist = (template: FormTemplate) => {
+    setChecklist((previous) => previous.some((item) => item.id === template.id) ? previous.filter((item) => item.id !== template.id) : [...previous, template]);
+  };
+
+  const toggleAllShown = () => {
+    setChecklist((previous) => {
+      if (allShownChecked) {
+        const shownIds = new Set(templates.map((item) => item.id));
+        return previous.filter((item) => !shownIds.has(item.id));
+      }
+      const existing = new Set(previous.map((item) => item.id));
+      return [...previous, ...templates.filter((item) => !existing.has(item.id))];
+    });
+  };
+
+  const addCustomItem = () => {
+    const label = customLabel.trim();
+    if (!label) return;
+    setCustomItems((previous) => [...previous, { id: `custom-${Date.now()}-${previous.length}`, label }]);
+    setCustomLabel("");
+  };
+
+  const clearChecklist = () => { setChecklist([]); setCustomItems([]); };
 
   const searchPatients = async () => {
     if (!token || patientSearch.trim().length < 2) return;
@@ -245,7 +281,16 @@ export default function FormsPage() {
             <Select label="Category" value={category} onChange={(event) => { setCategory(event.target.value); setSubcategory(""); }} options={[{ value: "", label: "All categories" }, ...categories.map((item) => ({ value: item, label: item }))]} />
             <Select label="Subcategory" value={subcategory} onChange={(event) => setSubcategory(event.target.value)} options={[{ value: "", label: "All subcategories" }, ...subcategories.map((item) => ({ value: item, label: item }))]} />
           </div>
-          <div className={styles.list}>{loading ? <div className={styles.empty}>Loading real templates…</div> : templates.length === 0 ? <div className={styles.empty}>No matching templates.</div> : templates.map((template) => <button type="button" key={template.id} className={[styles.template, selectedTemplate?.id === template.id ? styles.templateActive : ""].filter(Boolean).join(" ")} onClick={() => selectTemplate(template)}><div className={styles.templateName}>{template.name}</div><div className={styles.templateMeta}>{template.category}{template.subcategory ? ` · ${template.subcategory}` : ""}</div></button>)}</div>
+          {checklistCount > 0 && <section className={styles.checklist} aria-label="Selected forms checklist">
+            <div className={styles.checklistHeader}><h3 className={styles.checklistTitle}><ListChecks size={15} /> Selected forms ({checklistCount})</h3><Button type="button" variant="ghost" size="sm" onClick={clearChecklist}>Clear all</Button></div>
+            <ul className={styles.checklistItems}>
+              {checklist.map((item) => <li key={item.id} className={styles.checklistItem}><button type="button" className={styles.checklistName} onClick={() => selectTemplate(item)} title="View this form"><span>{item.name}</span><span className={styles.templateMeta}>{item.category}{item.subcategory ? ` · ${item.subcategory}` : ""}</span></button><button type="button" className={styles.iconButton} onClick={() => toggleChecklist(item)} aria-label={`Remove ${item.name}`}><X size={14} /></button></li>)}
+              {customItems.map((item) => <li key={item.id} className={styles.checklistItem}><div className={styles.checklistName}><span>{item.label}</span><span className={styles.templateMeta}>Custom item</span></div><button type="button" className={styles.iconButton} onClick={() => setCustomItems((previous) => previous.filter((entry) => entry.id !== item.id))} aria-label={`Remove ${item.label}`}><X size={14} /></button></li>)}
+            </ul>
+          </section>}
+          <div className={styles.addMore}><Input placeholder="Add another item to the checklist…" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCustomItem(); } }} aria-label="Add another checklist item" /><Button type="button" variant="secondary" leftIcon={<Plus size={15} />} onClick={addCustomItem} disabled={!customLabel.trim()}>Add</Button></div>
+          {!loading && templates.length > 0 && <label className={styles.selectAll}><input ref={selectAllRef} type="checkbox" checked={allShownChecked} onChange={toggleAllShown} /><span>Select all {templates.length} shown</span><span className={styles.muted}>{checklist.length} selected in total</span></label>}
+          <div className={styles.list}>{loading ? <div className={styles.empty}>Loading real templates…</div> : templates.length === 0 ? <div className={styles.empty}>No matching templates.</div> : templates.map((template) => <div key={template.id} className={[styles.templateRow, checkedIds.has(template.id) ? styles.templateRowChecked : ""].filter(Boolean).join(" ")}><label className={styles.checkCell}><input type="checkbox" checked={checkedIds.has(template.id)} onChange={() => toggleChecklist(template)} aria-label={`Add ${template.name} to checklist`} /></label><button type="button" className={[styles.template, selectedTemplate?.id === template.id ? styles.templateActive : ""].filter(Boolean).join(" ")} onClick={() => selectTemplate(template)}><div className={styles.templateName}>{template.name}</div><div className={styles.templateMeta}>{template.category}{template.subcategory ? ` · ${template.subcategory}` : ""}</div></button></div>)}</div>
         </Card>}
 
         <Card className={styles.panel} noPadding>

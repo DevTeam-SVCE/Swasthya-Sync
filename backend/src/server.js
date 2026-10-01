@@ -740,20 +740,78 @@ app.get("/api/discharge/summaries/:id/pdf", requireAuth, async (req, res, next) 
 const IPD_STATUSES = ["ADMITTED", "DISCHARGED"];
 const ipdSelect = `SELECT a.id, a.admission_number, a.admission_date, a.status, a.discharged_at,
   p.id AS patient_id, p.uhid, p.full_name AS patient_name, p.age, p.gender,
-  b.id AS bed_id, b.bed_number, b.ward, b.room FROM ipd_admissions a
+  b.id AS bed_id, b.bed_number, b.floor, b.ward, b.room FROM ipd_admissions a
   JOIN patients p ON p.id = a.patient_id JOIN beds b ON b.id = a.bed_id`;
 
 function publicBed(row) {
-  return { id: row.id, bedNumber: row.bed_number, ward: row.ward, room: row.room, status: row.status, patientId: row.patient_id ?? null, patientName: row.patient_name ?? null, uhid: row.uhid ?? null, admissionNumber: row.admission_number ?? null };
+  return { id: row.id, bedNumber: row.bed_number, floor: row.floor || "Unassigned", ward: row.ward, room: row.room, status: row.status, patientId: row.patient_id ?? null, patientName: row.patient_name ?? null, uhid: row.uhid ?? null, admissionNumber: row.admission_number ?? null };
 }
 
 function publicAdmission(row) {
-  return { id: row.id, admissionNumber: row.admission_number, patientId: row.patient_id, patientName: row.patient_name, uhid: row.uhid, age: row.age, gender: row.gender, bedId: row.bed_id, bedNumber: row.bed_number, ward: row.ward, room: row.room, admissionDate: row.admission_date, status: row.status, dischargedAt: row.discharged_at };
+  return { id: row.id, admissionNumber: row.admission_number, patientId: row.patient_id, patientName: row.patient_name, uhid: row.uhid, age: row.age, gender: row.gender, bedId: row.bed_id, bedNumber: row.bed_number, floor: row.floor || "Unassigned", ward: row.ward, room: row.room, admissionDate: row.admission_date, status: row.status, dischargedAt: row.discharged_at };
 }
+
+app.post("/api/ipd/beds", requireAuth, async (req, res, next) => {
+  const { bedNumberPrefix, bedCount, floor, ward, room } = req.body || {};
+  const count = Number(bedCount);
+  if (![floor, ward].every((value) => typeof value === "string" && value.trim())) {
+    return res.status(400).json({ message: "Floor and ward are required." });
+  }
+  if (!Number.isInteger(count) || count < 1 || count > 200) {
+    return res.status(400).json({ message: "Bed quantity must be between 1 and 200." });
+  }
+
+  const requestedPrefix = typeof bedNumberPrefix === "string" && bedNumberPrefix.trim()
+    ? bedNumberPrefix.trim().replace(/[^a-zA-Z0-9-]+/g, "").toUpperCase()
+    : ward.trim().replace(/[^a-zA-Z0-9]+/g, "").toUpperCase();
+  const prefix = requestedPrefix.slice(0, 24) || "BED";
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const beds = [];
+    for (let suffix = 1; beds.length < count && suffix <= 99999; suffix += 1) {
+      const bedNumber = `${prefix}-${String(suffix).padStart(3, "0")}`;
+      const result = await client.query(
+        "INSERT INTO beds (hospital_id, bed_number, floor, ward, room, active) VALUES ($1,$2,$3,$4,$5,TRUE) ON CONFLICT (hospital_id, bed_number) DO NOTHING RETURNING *",
+        [req.user.hospital_id, bedNumber, floor.trim(), ward.trim(), typeof room === "string" ? room.trim() || null : null]
+      );
+      if (result.rows[0]) beds.push(publicBed(result.rows[0]));
+    }
+    if (beds.length !== count) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Unable to generate unique bed numbers for that prefix." });
+    }
+    await client.query("COMMIT");
+    res.status(201).json({ beds, total: beds.length });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.put("/api/ipd/beds/:id", requireAuth, async (req, res, next) => {
+  const { bedNumber, floor, ward, room } = req.body || {};
+  if (![bedNumber, floor, ward].every((value) => typeof value === "string" && value.trim())) {
+    return res.status(400).json({ message: "Bed number, floor, and ward are required." });
+  }
+  try {
+    const result = await query(
+      "UPDATE beds SET bed_number=$1, floor=$2, ward=$3, room=$4 WHERE id=$5 AND hospital_id=$6 RETURNING *",
+      [bedNumber.trim(), floor.trim(), ward.trim(), typeof room === "string" ? room.trim() || null : null, req.params.id, req.user.hospital_id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ message: "Bed not found." });
+    res.json({ bed: publicBed(result.rows[0]) });
+  } catch (error) {
+    if (error.code === "23505") return res.status(409).json({ message: "That bed number already exists for this hospital." });
+    next(error);
+  }
+});
 
 app.get("/api/ipd/beds", requireAuth, async (req, res, next) => {
   try {
-    const result = await query(`SELECT b.*, a.admission_number, p.id AS patient_id, p.full_name AS patient_name, p.uhid FROM beds b LEFT JOIN ipd_admissions a ON a.bed_id = b.id AND a.status = 'ADMITTED' LEFT JOIN patients p ON p.id = a.patient_id WHERE b.hospital_id = $1 ORDER BY b.ward, b.bed_number`, [req.user.hospital_id]);
+    const result = await query(`SELECT b.*, a.admission_number, p.id AS patient_id, p.full_name AS patient_name, p.uhid FROM beds b LEFT JOIN ipd_admissions a ON a.bed_id = b.id AND a.status = 'ADMITTED' LEFT JOIN patients p ON p.id = a.patient_id WHERE b.hospital_id = $1 AND (b.active = TRUE OR a.id IS NOT NULL) ORDER BY b.floor, b.ward, b.room, b.bed_number`, [req.user.hospital_id]);
     res.json({ beds: result.rows.map(publicBed), total: result.rowCount });
   } catch (error) { next(error); }
 });
@@ -781,7 +839,7 @@ app.post("/api/ipd/admissions", requireAuth, async (req, res, next) => {
     await client.query("BEGIN");
     const patient = await client.query("SELECT id FROM patients WHERE id = $1 AND hospital_id = $2", [patientId, req.user.hospital_id]);
     if (!patient.rows[0]) { await client.query("ROLLBACK"); return res.status(404).json({ message: "Patient not found." }); }
-    const bed = await client.query("SELECT id FROM beds WHERE id = $1 AND hospital_id = $2 AND status = 'AVAILABLE' FOR UPDATE", [bedId, req.user.hospital_id]);
+    const bed = await client.query("SELECT id FROM beds WHERE id = $1 AND hospital_id = $2 AND status = 'AVAILABLE' AND active = TRUE FOR UPDATE", [bedId, req.user.hospital_id]);
     if (!bed.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ message: "Selected bed is no longer available." }); }
     const number = await client.query("SELECT nextval('ipd_admission_number_seq') AS value");
     const admissionNumber = `IPD-${new Date().getFullYear()}-${String(number.rows[0].value).padStart(5, "0")}`;
@@ -813,7 +871,7 @@ app.put("/api/ipd/admissions/:id/discharge", requireAuth, async (req, res, next)
 
 app.get("/api/ipd/overview", requireAuth, async (req, res, next) => {
   try {
-    const result = await query("SELECT status, COUNT(*)::int AS count FROM beds WHERE hospital_id = $1 GROUP BY status", [req.user.hospital_id]);
+    const result = await query("SELECT status, COUNT(*)::int AS count FROM beds WHERE hospital_id = $1 AND (active = TRUE OR status = 'OCCUPIED') GROUP BY status", [req.user.hospital_id]);
     const counts = Object.fromEntries(result.rows.map((row) => [row.status, row.count]));
     res.json({ total: (counts.AVAILABLE || 0) + (counts.OCCUPIED || 0), available: counts.AVAILABLE || 0, occupied: counts.OCCUPIED || 0 });
   } catch (error) { next(error); }

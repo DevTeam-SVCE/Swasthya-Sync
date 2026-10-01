@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Users,
   BedDouble,
   ClipboardList,
   Activity,
+  CalendarDays,
   TrendingUp,
   FlaskConical,
   AlertTriangle,
@@ -15,6 +16,8 @@ import {
   ArrowDownRight,
   Minus,
   ArrowRight,
+  RefreshCw,
+  Siren,
 } from "lucide-react";
 import {
   AreaChart,
@@ -38,8 +41,14 @@ import {
   DEMO_ALERTS,
 } from "@/lib/demo-data";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { useAuth } from "@/context/AuthContext";
+import { fetchAppointments } from "@/lib/appointments";
+import { fetchEmergencyQueue, type EmergencyEncounter } from "@/lib/emergency";
+import { fetchAdmissions, fetchBeds, fetchIPDOverview } from "@/lib/ipd";
+import type { Appointment } from "@/types/appointments";
+import type { Bed, IPDAdmission, IPDOverview } from "@/types/ipd";
 import styles from "./page.module.css";
 import { DASHBOARD_MODULE_CATEGORIES } from "@/lib/dashboard/dashboardData";
 
@@ -107,6 +116,81 @@ function AlertDot({ type }: { type: string }) {
       aria-hidden="true"
     />
   );
+}
+
+function localDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function LiveOperations() {
+  const { token } = useAuth();
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [admissions, setAdmissions] = useState<IPDAdmission[]>([]);
+  const [beds, setBeds] = useState<Bed[]>([]);
+  const [ipd, setIpd] = useState<IPDOverview>({ total: 0, available: 0, occupied: 0 });
+  const [emergencies, setEmergencies] = useState<EmergencyEncounter[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const today = localDateKey(new Date());
+
+  const load = useCallback(async (manual = false) => {
+    if (!token) return;
+    if (manual) setRefreshing(true);
+    else setLoading(true);
+    const results = await Promise.allSettled([
+      fetchAppointments(token, { date: today }),
+      fetchAdmissions(token),
+      fetchIPDOverview(token),
+      fetchEmergencyQueue(token),
+      fetchBeds(token),
+    ]);
+    let failures = 0;
+    const [appointmentResult, admissionResult, ipdResult, emergencyResult, bedsResult] = results;
+    if (appointmentResult.status === "fulfilled") setAppointments(appointmentResult.value.appointments);
+    else failures += 1;
+    if (admissionResult.status === "fulfilled") setAdmissions(admissionResult.value.admissions);
+    else failures += 1;
+    if (ipdResult.status === "fulfilled") setIpd(ipdResult.value);
+    else failures += 1;
+    if (emergencyResult.status === "fulfilled") setEmergencies(emergencyResult.value.encounters.filter((item) => item.status === "Waiting" || item.status === "In Treatment"));
+    else failures += 1;
+    if (bedsResult.status === "fulfilled") setBeds(bedsResult.value.beds);
+    else failures += 1;
+    setError(failures === results.length ? "Unable to load live operational data." : failures ? "Some live dashboard sections could not be refreshed." : "");
+    setLoading(false);
+    setRefreshing(false);
+  }, [today, token]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const redEmergencies = emergencies.filter((item) => item.triageLevel === "Red").length;
+  const upcomingAppointments = appointments.filter((item) => item.status !== "COMPLETED" && item.status !== "CANCELLED").slice(0, 4);
+  const visibleAdmissions = admissions.slice(0, 4);
+  const visibleEmergencies = emergencies.slice(0, 4);
+  const floorBeds = Object.entries(beds.filter((bed) => bed.floor && bed.floor !== "Unassigned").reduce<Record<string, Bed[]>>((groups, bed) => {
+    (groups[bed.floor] ??= []).push(bed);
+    return groups;
+  }, {})).sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true }));
+
+  return <section className={styles.liveOperations} aria-label="Live operational dashboard">
+    <div className={styles.liveHeading}><div><span className={styles.liveEyebrow}>Operational snapshot</span><h2>Live hospital activity</h2></div><div className={styles.liveHeadingActions}>{error && <span className={styles.liveError}>{error}</span>}<Button type="button" variant="secondary" leftIcon={<RefreshCw size={14} />} loading={refreshing} onClick={() => void load(true)}>Refresh live data</Button></div></div>
+    <div className={styles.liveMetrics}>
+      <div className={styles.liveMetric}><CalendarDays size={17} /><span>Today&apos;s appointments</span><strong>{loading ? "—" : appointments.length}</strong></div>
+      <div className={styles.liveMetric}><BedDouble size={17} /><span>Beds occupied</span><strong>{loading ? "—" : `${ipd.occupied} / ${ipd.total}`}</strong></div>
+      <div className={styles.liveMetric}><Activity size={17} /><span>Current inpatients</span><strong>{loading ? "—" : admissions.length}</strong></div>
+      <div className={[styles.liveMetric, redEmergencies ? styles.liveMetricUrgent : ""].filter(Boolean).join(" ")}><Siren size={17} /><span>Emergency queue</span><strong>{loading ? "—" : emergencies.length}</strong><small>{redEmergencies ? `${redEmergencies} critical` : "No red triage"}</small></div>
+    </div>
+    <div className={styles.livePanels}>
+      <section className={styles.livePanel}><header><h3>Today&apos;s schedule</h3><Link href="/appointments">All appointments <ArrowRight size={13} /></Link></header>{loading ? <p className={styles.liveEmpty}>Loading appointments…</p> : upcomingAppointments.length === 0 ? <p className={styles.liveEmpty}>No upcoming appointments today.</p> : <div className={styles.liveList}>{upcomingAppointments.map((appointment) => <Link className={styles.liveRow} href={`/appointments/${appointment.id}`} key={appointment.id}><span className={styles.liveTime}>{appointment.slotTime}</span><span className={styles.liveCopy}><strong>{appointment.patientName}</strong><small>{appointment.department} · {appointment.doctorName}</small></span><Badge size="sm" variant={appointment.status === "CONFIRMED" ? "success" : "warning"}>{appointment.status}</Badge></Link>)}</div>}</section>
+      <section className={styles.livePanel}><header><h3>Current inpatients</h3><Link href="/ipd">IPD <ArrowRight size={13} /></Link></header>{loading ? <p className={styles.liveEmpty}>Loading admissions…</p> : visibleAdmissions.length === 0 ? <p className={styles.liveEmpty}>No active IPD admissions.</p> : <div className={styles.liveList}>{visibleAdmissions.map((admission) => <Link className={styles.liveRow} href={`/patients/${admission.patientId}`} key={admission.id}><span className={styles.liveBed}>{admission.bedNumber}</span><span className={styles.liveCopy}><strong>{admission.patientName}</strong><small>{admission.uhid} · {admission.floor} · {admission.ward}</small></span></Link>)}</div>}</section>
+      <section className={styles.livePanel}><header><h3>Emergency attention</h3><Link href="/emergency">Open queue <ArrowRight size={13} /></Link></header>{loading ? <p className={styles.liveEmpty}>Loading emergencies…</p> : visibleEmergencies.length === 0 ? <p className={styles.liveEmpty}>No active emergency cases.</p> : <div className={styles.liveList}>{visibleEmergencies.map((encounter) => <Link className={styles.liveRow} href="/emergency" key={encounter.id}><Badge size="sm" variant={encounter.triageLevel === "Red" ? "danger" : encounter.triageLevel === "Orange" ? "warning" : "info"}>{encounter.triageLevel}</Badge><span className={styles.liveCopy}><strong>{encounter.patientName}</strong><small>{encounter.complaint}</small></span></Link>)}</div>}</section>
+      <section className={styles.livePanel}><header><h3>Bed capacity by floor</h3><Link href="/ipd">Bed management <ArrowRight size={13} /></Link></header>{loading ? <p className={styles.liveEmpty}>Loading capacity…</p> : floorBeds.length === 0 ? <p className={styles.liveEmpty}>No floor bed data available.</p> : <div className={styles.liveCapacity}>{floorBeds.map(([floor, floorList]) => { const occupied = floorList.filter((bed) => bed.status === "OCCUPIED").length; const available = floorList.length - occupied; return <div className={styles.liveCapacityRow} key={floor}><div><strong>{floor}</strong><small>{available} free / {floorList.length}</small></div><span className={styles.liveTrack} role="img" aria-label={`${floor}: ${occupied} occupied, ${available} available`}><i style={{ width: `${floorList.length ? (occupied / floorList.length) * 100 : 0}%` }} /></span></div>; })}</div>}</section>
+    </div>
+  </section>;
 }
 
 function ModuleLauncher() {
@@ -194,6 +278,8 @@ export default function DashboardPage() {
           </span>
         </div>
       </div>
+
+      <LiveOperations />
 
       {/* ── KPI grid ────────────────────────────────────── */}
       <div className={styles.kpiGrid}>
