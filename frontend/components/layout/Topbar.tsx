@@ -52,7 +52,7 @@ export function Topbar() {
         <div className={styles.hospitalInfo}>
           <Building2 size={15} className={styles.hospitalIcon} aria-hidden="true" />
           <span className={styles.hospitalName}>
-            {user?.hospitalName ?? "City General Hospital"}
+            {user?.hospitalName ?? "Cura Hospitals"}
           </span>
         </div>
       </div>
