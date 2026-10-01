@@ -157,6 +157,10 @@ export default function FormsPage() {
 
   const categories = useMemo(() => Array.from(new Set(templates.map((item) => item.category))).sort(), [templates]);
   const subcategories = useMemo(() => Array.from(new Set(templates.filter((item) => !category || item.category === category).map((item) => item.subcategory).filter(Boolean) as string[])).sort(), [templates, category]);
+  const formTitle = useMemo(() => {
+    const title = selectedTemplate?.name ?? "Form";
+    return title.trim().replace(/\s+/g, " ").replace(/\s*\([^)]*\)/g, "").replace(/\s+/g, " ").toUpperCase();
+  }, [selectedTemplate]);
 
   const searchPatients = async () => {
     if (!token || patientSearch.trim().length < 2) return;
@@ -247,7 +251,7 @@ export default function FormsPage() {
         <Card className={styles.panel} noPadding>
           {!selectedTemplate ? <div className={styles.empty}><div><FileText size={32} /><p>Select a template to view the actual PDF.</p></div></div> : <div className={styles.viewer}>
             <div className={styles.viewerHeader}><div><h2 className={styles.sectionTitle}>{selectedTemplate.name}</h2><p className={styles.sectionSubtitle}>{selectedTemplate.category}{selectedTemplate.subcategory ? ` · ${selectedTemplate.subcategory}` : ""}</p>{selectedPatient && <p className={styles.muted}>Patient: {selectedPatient.fullName} · {autoSaveStatus}</p>}</div><div className={styles.viewerActions}><a href={pdfUrl || "#"} target="_blank" rel="noreferrer"><Button type="button" variant="secondary">Open PDF</Button></a>{!openedFormId && <Button type="button" leftIcon={<UserPlus size={15} />} onClick={() => document.getElementById("use-for-patient")?.scrollIntoView({ behavior: "smooth" })}>Use for patient</Button>}</div></div>
-            {pdfUrl ? <PdfStage src={pdfUrl} title={selectedTemplate.name}><PatientHeader patient={selectedPatient} admission={patientAdmission} /><AnnotationCanvas strokes={strokes} onChange={setStrokes} /></PdfStage> : <div className={styles.empty}>Loading PDF…</div>}
+            {pdfUrl ? <PdfStage src={pdfUrl} title={selectedTemplate.name}><PatientHeader patient={selectedPatient} admission={patientAdmission} templateTitle={formTitle} /><AnnotationCanvas strokes={strokes} onChange={setStrokes} /></PdfStage> : <div className={styles.empty}>Loading PDF…</div>}
             <div id="use-for-patient" className={styles.formArea}><h3 className={styles.sectionTitle}>{selectedPatient ? `Patient form · ${selectedPatient.fullName}` : "Create patient form"}</h3>{!selectedPatient && <><div className={styles.search}><Input label="Search existing patient" placeholder="Name, UHID, or mobile" value={patientSearch} onChange={(event) => setPatientSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPatients(); } }} /></div>{patients.length > 0 && <div className={styles.list}>{patients.map((patient) => <button type="button" className={styles.template} key={patient.id} onClick={() => { setSelectedPatient(patient); setPatients([]); }}><div className={styles.templateName}>{patient.fullName}</div><div className={styles.templateMeta}>{patient.uhid} · {patient.department}</div></button>)}</div>}</>}{selectedPatient && <div className={styles.selectedPatient}><strong>{selectedPatient.fullName}</strong><span className={styles.muted}>{selectedPatient.uhid}</span><span className={styles.muted}>Auto-save: {autoSaveStatus}</span></div>}<Textarea label="Notes / data entry" placeholder="Record the information entered for this patient form. Changes save automatically." value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />{selectedPatient && openedFormId && <div className={styles.formActions}><Button type="button" loading={saving} onClick={() => void saveCurrentForm()}>Save form</Button><Button type="button" variant="ghost" onClick={() => setStrokes([])}>Clear pen marks</Button></div>}{!forms.some((form) => form.templateId === selectedTemplate.id && form.patientId === selectedPatient?.id) && <div className={styles.formActions}><Button type="button" loading={saving} onClick={() => void createFormForPatient()}>Create patient form</Button></div>}</div>
             {selectedPatient && <div className={styles.history}><h3 className={styles.sectionTitle}>Completed form history for {selectedPatient.fullName}</h3>{forms.length === 0 ? <p className={styles.muted}>No patient-specific forms yet.</p> : forms.map((form) => <div className={styles.historyRow} key={form.id}><div><strong>{form.templateName}</strong><div className={styles.muted}>{form.category} · {new Date(form.createdAt).toLocaleDateString("en-IN")}</div></div><div className={styles.viewerActions}><Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge><Button type="button" variant="ghost" size="sm" onClick={() => reopenPatientForm(form)}>Open</Button></div></div>)}</div>}
           </div>}
@@ -258,16 +262,29 @@ export default function FormsPage() {
   );
 }
 
-function PatientHeader({ patient, admission }: { patient: Patient | null; admission: IPDAdmission | null }) {
+function PatientHeader({ patient, admission, templateTitle }: { patient: Patient | null; admission: IPDAdmission | null; templateTitle: string }) {
   if (!patient) return null;
+  const today = new Date().toLocaleDateString("en-IN");
   return <div className={styles.patientHeaderOverlay} aria-label="Patient form header">
-    <strong>{patient.fullName}</strong>
-    <span>UHID: {patient.uhid}</span>
-    <span>Age/Sex: {patient.age} / {patient.gender}</span>
-    {admission && <span>IPID: {admission.admissionNumber}</span>}
-    <span>Doctor: {patient.attendingDoctor}</span>
-    <span>Department: {patient.department}</span>
-    <span>Date: {new Date().toLocaleDateString("en-IN")}</span>
+    <div className={styles.curaHeaderBrandRow}>
+      <div className={styles.curaBadge}>CURA</div>
+      <div className={styles.curaBranding}>
+        <strong>CURA Hospitals</strong>
+        <span>Patient form record</span>
+      </div>
+    </div>
+
+    <div className={styles.curaHeaderInfoGrid}>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Name</span><strong>{patient.fullName}</strong></div>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Age / Sex</span><strong>{patient.age} Y / {patient.gender}</strong></div>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>UHID</span><strong>{patient.uhid}</strong></div>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Date</span><strong>{today}</strong></div>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Doctor</span><strong>{patient.attendingDoctor || "Not assigned"}</strong></div>
+      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Department</span><strong>{patient.department || "Not assigned"}</strong></div>
+      {admission && <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>IPID</span><strong>{admission.admissionNumber}</strong></div>}
+    </div>
+
+    <div className={styles.formTitleBanner}>{templateTitle}</div>
   </div>;
 }
 
@@ -305,5 +322,5 @@ function AnnotationCanvas({ strokes, onChange }: { strokes: Stroke[]; onChange: 
     return { x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)) };
   };
 
-  return <canvas ref={canvasRef} className={styles.annotationCanvas} onPointerDown={(event) => { drawing.current = true; event.currentTarget.style.pointerEvents = "auto"; event.currentTarget.setPointerCapture(event.pointerId); onChange([...strokes, { points: [pointFromEvent(event)] }]); }} onPointerMove={(event) => { if (!drawing.current) return; const point = pointFromEvent(event); onChange(strokes.length ? [...strokes.slice(0, -1), { points: [...strokes[strokes.length - 1].points, point] }] : [{ points: [point] }]); }} onPointerUp={(event) => { drawing.current = false; event.currentTarget.style.pointerEvents = "none"; }} onPointerCancel={(event) => { drawing.current = false; event.currentTarget.style.pointerEvents = "none"; }} aria-label="Draw on patient form" />;
+  return <canvas ref={canvasRef} className={styles.annotationCanvas} onPointerDown={(event) => { drawing.current = true; event.currentTarget.setPointerCapture(event.pointerId); onChange([...strokes, { points: [pointFromEvent(event)] }]); }} onPointerMove={(event) => { if (!drawing.current) return; const point = pointFromEvent(event); onChange(strokes.length ? [...strokes.slice(0, -1), { points: [...strokes[strokes.length - 1].points, point] }] : [{ points: [point] }]); }} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }} aria-label="Draw on patient form" />;
 }

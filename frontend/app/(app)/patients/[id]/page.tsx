@@ -65,6 +65,7 @@ function PatientForms({ patientId, patientName, initialCategory }: { patientId: 
   const [category, setCategory] = useState(initialCategory);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!token) return;
@@ -79,18 +80,107 @@ function PatientForms({ patientId, patientName, initialCategory }: { patientId: 
 
   if (loading) return <div className={styles.empty}>Loading forms for {patientName}…</div>;
   if (error) return <div className={styles.error}>{error}</div>;
+
   const availableCategories = new Set(templates.map((template) => template.category));
   const categories = ["Admission", "Nursing", "Assessment", ...Array.from(availableCategories).filter((item) => !["Admission", "Nursing", "Assessment"].includes(item)).sort()];
   const categoryTemplates = templates.filter((template) => template.category === category);
-  const categoryForms = forms.filter((form) => form.category === category);
 
-  return <div className={styles.formsWorkspace}>
-    <div className={styles.formCategories} aria-label="Patient form categories">
-      {categories.map((item) => <button type="button" key={item} className={[styles.formCategory, category === item ? styles.formCategoryActive : ""].filter(Boolean).join(" ")} onClick={() => setCategory(item)}>{item}</button>)}
+  const categoryOrder = [
+    "Admission",
+    "Nursing",
+    "Assessment",
+    "Consent",
+    "Discharge & End of Life",
+    "Infection Control",
+    "Medication",
+    "Monitoring",
+    "Surgery & OT",
+    "Transfer & Referral",
+  ];
+
+  const usedFormGroups = Array.from(new Map(
+    forms.reduce<Map<string, PatientForm[]>>((accumulator, form) => {
+      const current = accumulator.get(form.category) ?? [];
+      current.push(form);
+      accumulator.set(form.category, current);
+      return accumulator;
+    }, new Map())
+  ).entries())
+    .map(([categoryName, categoryForms]) => ({
+      category: categoryName,
+      forms: categoryForms.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    }))
+    .sort((a, b) => {
+      const aIndex = categoryOrder.indexOf(a.category);
+      const bIndex = categoryOrder.indexOf(b.category);
+      if (aIndex !== -1 || bIndex !== -1) {
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      }
+      return a.category.localeCompare(b.category);
+    });
+
+  const toggleCategory = (categoryName: string) => {
+    setExpandedCategories((previous) => ({
+      ...previous,
+      [categoryName]: !(previous[categoryName] ?? true),
+    }));
+  };
+
+  return <div className={styles.formsLayout}>
+    <div className={styles.formsLibrary}>
+      <div className={styles.formCategories} aria-label="Patient form categories">
+        {categories.map((item) => <button type="button" key={item} className={[styles.formCategory, category === item ? styles.formCategoryActive : ""].filter(Boolean).join(" ")} onClick={() => setCategory(item)}>{item}</button>)}
+      </div>
+      <div className={styles.formSection}>
+        <h3 className={styles.formSectionTitle}>{category} forms</h3>
+        <p className={styles.muted}>Available templates for {patientName}.</p>
+        {categoryTemplates.length === 0 ? <p className={styles.muted}>No templates are available in this category.</p> : <div className={styles.formTemplateList}>{categoryTemplates.map((template) => <div className={styles.formTemplateRow} key={template.id}><div><strong>{template.name}</strong><div className={styles.muted}>{template.subcategory || template.category}</div></div><Link href={`/forms?patientId=${patientId}&templateId=${template.id}&category=${encodeURIComponent(category)}`}><Button type="button" variant="secondary" size="sm">Open form</Button></Link></div>)}</div>}
+      </div>
     </div>
-      <div className={styles.formSection}><h3 className={styles.formSectionTitle}>{category} forms</h3><p className={styles.muted}>Available templates for {patientName}.</p>{categoryTemplates.length === 0 ? <p className={styles.muted}>No templates are available in this category.</p> : <div className={styles.formTemplateList}>{categoryTemplates.map((template) => <div className={styles.formTemplateRow} key={template.id}><div><strong>{template.name}</strong><div className={styles.muted}>{template.subcategory || template.category}</div></div><Link href={`/forms?patientId=${patientId}&templateId=${template.id}&category=${encodeURIComponent(category)}`}><Button type="button" variant="secondary" size="sm">Open form</Button></Link></div>)}</div>}</div>
-    <div className={styles.formSection}><h3 className={styles.formSectionTitle}>Saved {category} forms</h3>{categoryForms.length === 0 ? <p className={styles.muted}>No saved forms in this category yet.</p> : <div className={styles.formTemplateList}>{categoryForms.map((form) => <div className={styles.formTemplateRow} key={form.id}><div><strong>{form.templateName}</strong><div className={styles.muted}>{form.status} · Saved {new Date(form.updatedAt).toLocaleDateString("en-IN")} · {form.createdBy}</div></div><div className={styles.formRowActions}><Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge><Link href={`/forms?patientId=${patientId}&templateId=${form.templateId}&formId=${form.id}&category=${encodeURIComponent(category)}`}><Button type="button" variant="ghost" size="sm">Open saved</Button></Link></div></div>)}</div>}</div>
-    <div className={styles.formSection}><h3 className={styles.formSectionTitle}>Forms Used for This Patient</h3><p className={styles.muted}>All saved patient-specific form instances, regardless of the selected category.</p>{forms.length === 0 ? <p className={styles.muted}>No forms have been used for this patient yet.</p> : <div className={styles.formTemplateList}>{forms.map((form) => <div className={styles.formTemplateRow} key={form.id}><div><strong>{form.templateName}</strong><div className={styles.muted}>{form.category}{form.subcategory ? ` · ${form.subcategory}` : ""} · Saved {new Date(form.updatedAt).toLocaleDateString("en-IN")}</div></div><div className={styles.formRowActions}><Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge><Link href={`/forms?patientId=${patientId}&templateId=${form.templateId}&formId=${form.id}&category=${encodeURIComponent(form.category)}`}><Button type="button" variant="ghost" size="sm">Open</Button></Link></div></div>)}</div>}</div>
+
+    <aside className={styles.usedFormsPanel}>
+      <div className={styles.usedFormsHeader}>
+        <h3 className={styles.formSectionTitle}>Forms Used for This Patient</h3>
+        <p className={styles.muted}>All saved forms for this patient</p>
+      </div>
+
+      {usedFormGroups.length === 0 ? (
+        <div className={styles.usedFormsEmpty}>No forms have been used for this patient yet.</div>
+      ) : (
+        <div className={styles.usedFormsList}>
+          {usedFormGroups.map(({ category: categoryName, forms: categoryItems }) => {
+            const isExpanded = expandedCategories[categoryName] ?? true;
+            return (
+              <div key={categoryName} className={styles.usedFormGroup}>
+                <button type="button" className={styles.usedCategoryToggle} onClick={() => toggleCategory(categoryName)}>
+                  <span className={styles.usedCategoryChevron} data-expanded={isExpanded}>{isExpanded ? "▾" : "▸"}</span>
+                  <span>{categoryName}</span>
+                </button>
+
+                {isExpanded && (
+                  <div className={styles.usedFormEntries}>
+                    {categoryItems.map((form) => (
+                      <div key={form.id} className={styles.usedFormEntry}>
+                        <div className={styles.usedFormMeta}>
+                          <strong>{form.templateName}</strong>
+                          <span className={styles.muted}>Saved {new Date(form.updatedAt).toLocaleDateString("en-IN")}</span>
+                        </div>
+                        <div className={styles.usedFormActions}>
+                          <Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge>
+                          <Link href={`/forms?patientId=${patientId}&templateId=${form.templateId}&formId=${form.id}&category=${encodeURIComponent(form.category)}`}><Button type="button" variant="ghost" size="sm">Open</Button></Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </aside>
   </div>;
 }
 

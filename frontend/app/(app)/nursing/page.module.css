@@ -1,0 +1,115 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+  padding: 1rem 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.search { flex: 1 1 280px; }
+.wardFilter { flex: 0 1 220px; }
+.muted { color: #64748b; font-size: 0.86rem; }
+.workspace { display: flex; flex-direction: column; gap: 1rem; }
+.patientCard { display: flex; flex-direction: column; gap: 1rem; }
+
+.patientHeading,
+.entryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.patientHeading h2 { margin: 0; font-size: 1.2rem; }
+.patientHeading p { margin: 0.3rem 0 0; color: #64748b; }
+
+.patientFacts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+.fact { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.fact span { color: #64748b; font-size: 0.7rem; text-transform: uppercase; }
+.fact strong { color: #17212b; font-size: 0.9rem; overflow-wrap: anywhere; }
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  border-bottom: 1px solid #dbe3ea;
+}
+
+.tab,
+.activeTab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #566579;
+  font: inherit;
+  cursor: pointer;
+}
+
+.activeTab { border-bottom-color: #16825d; color: #126c4e; font-weight: 600; }
+.section { display: flex; flex-direction: column; gap: 1rem; }
+.section h2, .historyBlock h3, .section h3 { margin: 0; font-size: 1.05rem; }
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  align-items: end;
+}
+
+.fullWidth { grid-column: 1 / -1; }
+.historyBlock { display: flex; flex-direction: column; gap: 0.75rem; }
+.historyList { display: flex; flex-direction: column; gap: 0.65rem; }
+
+.historyEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.8rem;
+  border: 1px solid #e1e7ed;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.historyEntry p { margin: 0; color: #253243; white-space: pre-wrap; overflow-wrap: anywhere; }
+.latestVitals { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.8rem; border-left: 3px solid #16825d; background: #f3f8f6; }
+.latestVitals span { color: #253243; }
+.actionRow { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.totalRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.8rem;
+  border-bottom: 1px solid #e1e7ed;
+}
+
+.totalRow span { display: flex; gap: 0.55rem; color: #64748b; }
+.totalRow strong { color: #17212b; }
+
+@media (max-width: 900px) {
+  .patientFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .patientFacts, .formGrid { grid-template-columns: 1fr; }
+  .fullWidth { grid-column: auto; }
+  .wardFilter { flex-basis: 100%; }
+}
