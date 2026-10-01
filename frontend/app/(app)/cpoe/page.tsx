@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Clock3, ClipboardList, RefreshCw, Search, Stethoscope } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -29,8 +29,34 @@ const ORDER_CATEGORIES: { value: CpoeOrderCategory; label: string }[] = [
   { value: "Radiology", label: "Radiology" },
   { value: "Medication", label: "Medication" },
   { value: "Procedure", label: "Procedure" },
+  { value: "Blood Bank", label: "Blood Bank" },
   { value: "Other", label: "Other" },
 ];
+
+const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+const BLOOD_COMPONENTS = ["Whole blood", "Red blood cells", "Platelets", "Fresh frozen plasma", "Cryoprecipitate"];
+
+function createInitialOrderForm() {
+  return {
+    category: "Laboratory" as CpoeOrderCategory,
+    priority: "ROUTINE" as CpoeOrderPriority,
+    orderItem: "",
+    medicationName: "",
+    modality: "",
+    bodyPart: "",
+    clinicalIndication: "",
+    bloodGroup: "",
+    bloodComponent: "",
+    bloodQuantity: "",
+    dose: "",
+    route: "",
+    frequency: "",
+    duration: "",
+    quantity: "",
+    clinicalInstructions: "",
+    notes: "",
+  };
+}
 
 const ORDER_PRIORITIES: { value: CpoeOrderPriority; label: string }[] = [
   { value: "STAT", label: "STAT" },
@@ -49,13 +75,8 @@ export default function CpoePage() {
   const [searchingPatients, setSearchingPatients] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({
-    category: "Laboratory" as CpoeOrderCategory,
-    priority: "ROUTINE" as CpoeOrderPriority,
-    orderItem: "",
-    clinicalInstructions: "",
-    notes: "",
-  });
+  const [form, setForm] = useState(createInitialOrderForm);
+  const patientSearchRequestId = useRef(0);
 
   const patientOrders = useMemo(
     () => (selectedPatient ? orders.filter((order) => order.patientId === selectedPatient.id) : orders),
@@ -77,6 +98,7 @@ export default function CpoePage() {
   }, [token]);
 
   const searchPatientsByName = async (value: string) => {
+    const requestId = ++patientSearchRequestId.current;
     if (!token || value.trim().length < 2) {
       setPatients([]);
       return;
@@ -84,12 +106,23 @@ export default function CpoePage() {
     setSearchingPatients(true);
     try {
       const response = await fetchPatients(token, value.trim());
-      setPatients(response.patients.filter((patient) => patient.id !== selectedPatient?.id));
+      if (requestId === patientSearchRequestId.current) {
+        setPatients(response.patients.filter((patient) => patient.id !== selectedPatient?.id));
+      }
     } catch {
-      setPatients([]);
+      if (requestId === patientSearchRequestId.current) setPatients([]);
     } finally {
-      setSearchingPatients(false);
+      if (requestId === patientSearchRequestId.current) setSearchingPatients(false);
     }
+  };
+
+  const resetOrderDraft = () => {
+    patientSearchRequestId.current += 1;
+    setForm(createInitialOrderForm());
+    setSelectedPatient(null);
+    setSearch("");
+    setPatients([]);
+    setSearchingPatients(false);
   };
 
   useEffect(() => {
@@ -99,32 +132,92 @@ export default function CpoePage() {
     return () => window.clearTimeout(timeoutId);
   }, [loadOrders]);
 
+  const handleRefreshOrders = () => {
+    resetOrderDraft();
+    void loadOrders();
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!token || !selectedPatient) {
       toastError("Select a patient before ordering.", "Use the patient lookup to choose the existing record.");
       return;
     }
-    if (!form.orderItem.trim()) {
+
+    const isMedicationOrder = form.category === "Medication";
+    const isRadiologyOrder = form.category === "Radiology";
+    const isBloodBankOrder = form.category === "Blood Bank";
+    const medicationName = isMedicationOrder ? form.medicationName.trim() : form.orderItem.trim();
+    const orderItem = isMedicationOrder ? medicationName : isBloodBankOrder ? form.bloodComponent.trim() : form.orderItem.trim();
+
+    if (isMedicationOrder && !medicationName) {
+      toastError("Medication name is required.", "Enter the medication before saving the prescription.");
+      return;
+    }
+
+    if (!isMedicationOrder && !isBloodBankOrder && !form.orderItem.trim()) {
       toastError("Order item is required.", "Enter the requested investigation, medication, or procedure.");
       return;
     }
+
+    if (isBloodBankOrder && (!form.bloodGroup || !form.bloodComponent || !Number.isInteger(Number(form.bloodQuantity)) || Number(form.bloodQuantity) <= 0)) {
+      toastError("Blood request details are required.", "Select the blood group and component, and enter a positive whole-number quantity.");
+      return;
+    }
+
+    const medicationMeta = isMedicationOrder
+      ? [
+          ["Dose", form.dose],
+          ["Route", form.route],
+          ["Frequency", form.frequency],
+          ["Duration", form.duration],
+          ["Quantity", form.quantity],
+        ]
+          .filter(([, value]) => value && value.trim())
+          .map(([label, value]) => `${label}: ${value?.trim()}`)
+          .join(" | ")
+      : "";
+    const radiologyMeta = isRadiologyOrder
+      ? [
+          ["Modality", form.modality],
+          ["Body part", form.bodyPart],
+          ["Clinical indication", form.clinicalIndication],
+          ["Instructions", form.clinicalInstructions],
+        ]
+          .filter(([, value]) => value && value.trim())
+          .map(([label, value]) => `${label}: ${value?.trim()}`)
+          .join(" | ")
+      : "";
+    const bloodBankMeta = isBloodBankOrder
+      ? [
+          ["Blood group", form.bloodGroup],
+          ["Quantity", form.bloodQuantity],
+          ["Clinical indication", form.clinicalIndication],
+          ["Instructions", form.clinicalInstructions],
+        ]
+          .filter(([, value]) => value && value.trim())
+          .map(([label, value]) => `${label}: ${value?.trim()}`)
+          .join(" | ")
+      : "";
 
     try {
       setSubmitting(true);
       await createCpoeOrder(token, {
         patientId: selectedPatient.id,
         category: form.category,
-        orderItem: form.orderItem,
+        orderItem,
         priority: form.priority,
-        clinicalInstructions: form.clinicalInstructions || undefined,
+        clinicalInstructions: isMedicationOrder
+          ? medicationMeta || form.clinicalInstructions || undefined
+          : isRadiologyOrder
+            ? radiologyMeta || undefined
+            : isBloodBankOrder
+              ? bloodBankMeta || undefined
+              : form.clinicalInstructions || undefined,
         notes: form.notes || undefined,
       });
       success("CPOE order created.", `${selectedPatient.fullName} has a new ${form.category.toLowerCase()} order.`);
-      setForm({ category: "Laboratory", priority: "ROUTINE", orderItem: "", clinicalInstructions: "", notes: "" });
-      setSelectedPatient(null);
-      setSearch("");
-      setPatients([]);
+      resetOrderDraft();
       await loadOrders();
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to create order.";
@@ -153,7 +246,7 @@ export default function CpoePage() {
           <h1 className={styles.title}>CPOE</h1>
           <p className={styles.subtitle}>Computerised physician order entry for existing patient encounters.</p>
         </div>
-        <Button variant="secondary" leftIcon={<RefreshCw size={15} />} onClick={() => void loadOrders()}>
+        <Button variant="secondary" loading={loading} leftIcon={<RefreshCw size={15} />} onClick={() => void handleRefreshOrders()}>
           Refresh orders
         </Button>
       </div>
@@ -237,18 +330,81 @@ export default function CpoePage() {
               />
             </div>
 
-            <Input
-              label="Order item"
-              value={form.orderItem}
-              onChange={(event) => setForm((current) => ({ ...current, orderItem: event.target.value }))}
-              placeholder="e.g. CBC with differential, X-ray chest AP, Metformin 500mg"
-            />
+            {form.category === "Medication" ? (
+              <>
+                <Input
+                  label="Medication name"
+                  value={form.medicationName}
+                  onChange={(event) => setForm((current) => ({ ...current, medicationName: event.target.value }))}
+                  placeholder="e.g. Metformin 500mg"
+                />
+
+                <div className={styles.formGrid}>
+                  <Input
+                    label="Dose"
+                    value={form.dose}
+                    onChange={(event) => setForm((current) => ({ ...current, dose: event.target.value }))}
+                    placeholder="e.g. 500mg"
+                  />
+                  <Input
+                    label="Route"
+                    value={form.route}
+                    onChange={(event) => setForm((current) => ({ ...current, route: event.target.value }))}
+                    placeholder="e.g. Oral"
+                  />
+                  <Input
+                    label="Frequency"
+                    value={form.frequency}
+                    onChange={(event) => setForm((current) => ({ ...current, frequency: event.target.value }))}
+                    placeholder="e.g. BID"
+                  />
+                  <Input
+                    label="Duration"
+                    value={form.duration}
+                    onChange={(event) => setForm((current) => ({ ...current, duration: event.target.value }))}
+                    placeholder="e.g. 5 days"
+                  />
+                  <Input
+                    label="Quantity"
+                    value={form.quantity}
+                    onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))}
+                    placeholder="e.g. 10 tablets"
+                  />
+                </div>
+              </>
+            ) : form.category === "Blood Bank" ? (
+              <>
+                <div className={styles.formGrid}>
+                  <Select label="Patient blood group requested" required value={form.bloodGroup} onChange={(event) => setForm((current) => ({ ...current, bloodGroup: event.target.value }))} options={[{ value: "", label: "Select blood group" }, ...BLOOD_GROUPS.map((group) => ({ value: group, label: group }))]} />
+                  <Select label="Blood component / product" required value={form.bloodComponent} onChange={(event) => setForm((current) => ({ ...current, bloodComponent: event.target.value }))} options={[{ value: "", label: "Select component" }, ...BLOOD_COMPONENTS.map((component) => ({ value: component, label: component }))]} />
+                </div>
+                <Input type="number" min="1" step="1" label="Quantity (units)" required value={form.bloodQuantity} onChange={(event) => setForm((current) => ({ ...current, bloodQuantity: event.target.value }))} placeholder="e.g. 2" />
+                <Textarea label="Clinical indication" value={form.clinicalIndication} onChange={(event) => setForm((current) => ({ ...current, clinicalIndication: event.target.value }))} placeholder="Reason for blood product request." rows={2} />
+              </>
+            ) : (
+              <Input
+                label={form.category === "Laboratory" ? "Test / Investigation" : "Order item"}
+                value={form.orderItem}
+                onChange={(event) => setForm((current) => ({ ...current, orderItem: event.target.value }))}
+                placeholder={form.category === "Laboratory" ? "e.g. CBC with differential" : "e.g. Procedure or other clinical order"}
+              />
+            )}
+
+            {form.category === "Radiology" && (
+              <Textarea
+                label="Clinical indication / reason"
+                value={form.clinicalIndication}
+                onChange={(event) => setForm((current) => ({ ...current, clinicalIndication: event.target.value }))}
+                placeholder="e.g. Persistent cough; evaluate for chest infection."
+                rows={3}
+              />
+            )}
 
             <Textarea
-              label="Clinical instructions"
+              label={form.category === "Medication" ? "Medication instructions" : form.category === "Radiology" ? "Radiology instructions" : form.category === "Blood Bank" ? "Blood bank instructions" : "Clinical instructions"}
               value={form.clinicalInstructions}
               onChange={(event) => setForm((current) => ({ ...current, clinicalInstructions: event.target.value }))}
-              placeholder="Instructions for the ordering clinician or downstream team."
+              placeholder={form.category === "Medication" ? "Additional administration notes or instructions." : "Instructions for the ordering clinician or downstream team."}
               rows={3}
             />
 
