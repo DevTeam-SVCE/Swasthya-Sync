@@ -1,6 +1,6 @@
 import { apiRequest, authHeaders } from "@/lib/api";
 
-export type CpoeOrderCategory = "Laboratory" | "Radiology" | "Medication" | "Procedure" | "Other";
+export type CpoeOrderCategory = "Laboratory" | "Radiology" | "Medication" | "Procedure" | "Blood Bank" | "Other";
 export type CpoeOrderPriority = "STAT" | "URGENT" | "ROUTINE";
 export type CpoeOrderStatus = "ORDERED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 
