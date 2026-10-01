@@ -84,6 +84,7 @@ function PatientForms({ patientId, patientName, initialCategory }: { patientId: 
   const availableCategories = new Set(templates.map((template) => template.category));
   const categories = ["Admission", "Nursing", "Assessment", ...Array.from(availableCategories).filter((item) => !["Admission", "Nursing", "Assessment"].includes(item)).sort()];
   const categoryTemplates = templates.filter((template) => template.category === category);
+  const categoryForms = forms.filter((form) => form.category === category).sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
 
   const categoryOrder = [
     "Admission",
@@ -137,6 +138,10 @@ function PatientForms({ patientId, patientName, initialCategory }: { patientId: 
         <h3 className={styles.formSectionTitle}>{category} forms</h3>
         <p className={styles.muted}>Available templates for {patientName}.</p>
         {categoryTemplates.length === 0 ? <p className={styles.muted}>No templates are available in this category.</p> : <div className={styles.formTemplateList}>{categoryTemplates.map((template) => <div className={styles.formTemplateRow} key={template.id}><div><strong>{template.name}</strong><div className={styles.muted}>{template.subcategory || template.category}</div></div><Link href={`/forms?patientId=${patientId}&templateId=${template.id}&category=${encodeURIComponent(category)}`}><Button type="button" variant="secondary" size="sm">Open form</Button></Link></div>)}</div>}
+      </div>
+      <div className={styles.formSection}>
+        <h3 className={styles.formSectionTitle}>Saved {category} forms</h3>
+        {categoryForms.length === 0 ? <p className={styles.muted}>No saved forms in this category yet.</p> : <div className={styles.formTemplateList}>{categoryForms.map((form) => <div className={styles.formTemplateRow} key={form.id}><div><strong>{form.templateName}</strong><div className={styles.muted}>Saved {new Date(form.updatedAt).toLocaleDateString("en-IN")}</div></div><div className={styles.formRowActions}><Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge><Link href={`/forms?patientId=${patientId}&templateId=${form.templateId}&formId=${form.id}&category=${encodeURIComponent(category)}`}><Button type="button" variant="ghost" size="sm">Open saved</Button></Link></div></div>)}</div>}
       </div>
     </div>
 

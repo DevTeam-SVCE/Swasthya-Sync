@@ -4,6 +4,7 @@ export type AdmissionStatus = "ADMITTED" | "DISCHARGED";
 export interface Bed {
   id: string;
   bedNumber: string;
+  floor: string;
   ward: string;
   room: string | null;
   status: BedStatus;
@@ -23,6 +24,7 @@ export interface IPDAdmission {
   gender: string;
   bedId: string;
   bedNumber: string;
+  floor: string;
   ward: string;
   room: string | null;
   admissionDate: string;
