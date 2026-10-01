@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { query } = require("./db");
+const { canAccess, normalizeRole } = require("./permissions");
 
 function createToken(user) {
   return jwt.sign(
@@ -10,6 +11,7 @@ function createToken(user) {
 }
 
 async function requireAuth(req, res, next) {
+  if (req.user) return next();
   const header = req.get("authorization");
   const token = header && header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return res.status(401).json({ message: "Authentication required." });
@@ -37,7 +39,16 @@ async function requireAuth(req, res, next) {
 
 function requireRole(...roles) {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    if (!roles.map(normalizeRole).includes(normalizeRole(req.user.role))) {
+      return res.status(403).json({ message: "You do not have permission to access this resource." });
+    }
+    next();
+  };
+}
+
+function requirePermission(module, action = "view") {
+  return (req, res, next) => {
+    if (!canAccess(req.user.role, module, action)) {
       return res.status(403).json({ message: "You do not have permission to access this resource." });
     }
     next();
@@ -49,11 +60,11 @@ function publicUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role.toLowerCase(),
+    role: normalizeRole(user.role).toLowerCase(),
     hospitalName: user.hospital_name,
     hospitalId: user.hospital_id,
     avatarInitials: user.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
   };
 }
 
-module.exports = { createToken, requireAuth, requireRole, publicUser };
+module.exports = { createToken, requireAuth, requireRole, requirePermission, publicUser };

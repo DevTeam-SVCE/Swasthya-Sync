@@ -13,13 +13,49 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'STAFF')),
+  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF')),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF'));
+
 CREATE INDEX IF NOT EXISTS users_hospital_id_idx ON users(hospital_id);
+
+CREATE TABLE IF NOT EXISTS staff_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  hospital_id UUID NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
+  source_key TEXT,
+  full_name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF')),
+  staff_id TEXT,
+  phone TEXT,
+  designation TEXT,
+  department TEXT,
+  seniority TEXT,
+  qualification TEXT,
+  date_of_joining DATE,
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_user_id_unique_idx ON staff_profiles(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_hospital_staff_id_unique_idx ON staff_profiles(hospital_id, staff_id);
+CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_hospital_source_key_unique_idx ON staff_profiles(hospital_id, source_key);
+CREATE INDEX IF NOT EXISTS staff_profiles_hospital_role_idx ON staff_profiles(hospital_id, role);
+CREATE INDEX IF NOT EXISTS staff_profiles_designation_idx ON staff_profiles(designation);
+CREATE INDEX IF NOT EXISTS staff_profiles_department_idx ON staff_profiles(department);
+
+INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, status)
+SELECT u.id, u.hospital_id, u.name, u.role,
+  'USR-' || upper(replace(u.id::text, '-', '')),
+  CASE WHEN u.active THEN 'ACTIVE' ELSE 'SUSPENDED' END
+FROM users u
+ON CONFLICT (user_id) DO NOTHING;
 
 CREATE SEQUENCE IF NOT EXISTS patient_uhid_seq START 1001;
 

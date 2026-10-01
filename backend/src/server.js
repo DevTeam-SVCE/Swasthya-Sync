@@ -7,8 +7,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const PDFDocument = require("pdfkit");
 const { query, pool, initializeDatabase } = require("./db");
-const { createToken, publicUser, requireAuth, requireRole } = require("./auth");
+const { createToken, publicUser, requireAuth, requireRole, requirePermission } = require("./auth");
+const { permissionForApiRequest } = require("./permissions");
 const { DOCTORS, findDoctor } = require("./doctors");
+const { router: staffRouter } = require("./staff");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -77,6 +79,14 @@ app.post("/api/auth/login", async (req, res, next) => {
 app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
 app.post("/api/auth/logout", requireAuth, (_req, res) => res.status(204).end());
 app.get("/api/admin/check", requireAuth, requireRole("ADMIN"), (_req, res) => res.json({ allowed: true }));
+
+app.use((req, res, next) => {
+  const permission = permissionForApiRequest(req.method, req.path);
+  if (!permission) return next();
+  return requireAuth(req, res, () => requirePermission(permission.module, permission.action)(req, res, next));
+});
+
+app.use("/api/staff", staffRouter);
 
 const PATIENT_ENUMS = {
   admissionType: ["OPD", "IPD", "Emergency", "Day Care", "ICU"],
