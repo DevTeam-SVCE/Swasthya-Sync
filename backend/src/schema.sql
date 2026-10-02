@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS staff_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE staff_profiles DROP CONSTRAINT IF EXISTS staff_profiles_role_check;
+ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_role_check
+  CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF'));
+
 CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_user_id_unique_idx ON staff_profiles(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_hospital_staff_id_unique_idx ON staff_profiles(hospital_id, staff_id);
 CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_hospital_source_key_unique_idx ON staff_profiles(hospital_id, source_key);

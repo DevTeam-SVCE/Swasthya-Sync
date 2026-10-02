@@ -94,16 +94,17 @@ async function seed() {
     const savedUser = await query(
       `INSERT INTO users (hospital_id, name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, active = TRUE
+       ON CONFLICT (email) DO NOTHING
        RETURNING id`,
       [hospitalId, user.name, user.email, passwordHash, user.role]
     );
+    const userId = savedUser.rows[0]?.id ??
+      (await query("SELECT id FROM users WHERE email = $1", [user.email])).rows[0].id;
     await query(
       `INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, status)
        VALUES ($1, $2, $3, $4, $5, 'ACTIVE')
-       ON CONFLICT (user_id) DO UPDATE
-       SET hospital_id = EXCLUDED.hospital_id, full_name = EXCLUDED.full_name, role = EXCLUDED.role, updated_at = NOW()`,
-      [savedUser.rows[0].id, hospitalId, user.name, user.role, `SEED-${user.role}`]
+       ON CONFLICT (user_id) DO NOTHING`,
+      [userId, hospitalId, user.name, user.role, `SEED-${user.role}`]
     );
   }
 
