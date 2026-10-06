@@ -1,15 +1,265 @@
-.pdfStage {
-  position: relative;
-  height: 620px;
-  overflow: hidden;
-  overscroll-behavior: contain;
-  background: var(--color-gray-100);
+.stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.pdf {
-  display: block;
+.stageMaximized {
+  position: fixed;
+  inset: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  background: white;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid #d5dce5;
+  border-bottom: 0;
+  background: #f8fafc;
+  color: #263445;
+  box-sizing: border-box;
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.toolButton,
+.iconButton,
+.actionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.toolButton,
+.actionButton {
+  padding: 0 8px;
+}
+
+.iconButton {
+  width: 32px;
+  padding: 0;
+}
+
+.toolButton:hover,
+.iconButton:hover:not(:disabled),
+.actionButton:hover:not(:disabled) {
+  border-color: #b8c4d2;
+  background: white;
+}
+
+.toolButtonActive {
+  border-color: #9ab7de;
+  background: #eaf2fc;
+  color: #174b8c;
+}
+
+.iconButton:disabled,
+.actionButton:disabled {
+  color: #9ba6b2;
+  cursor: not-allowed;
+}
+
+.rangeControl,
+.colorControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.rangeControl input {
+  width: 82px;
+  accent-color: #2563eb;
+}
+
+.rangeControl output {
+  min-width: 27px;
+  color: #566477;
+  font-variant-numeric: tabular-nums;
+}
+
+.colorControl input {
+  width: 28px;
+  height: 26px;
+  padding: 2px;
+  border: 1px solid #cbd3dd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+}
+
+.viewer {
   width: 100%;
-  height: 100%;
-  border: 0;
-  background: var(--color-gray-100);
+  height: min(720px, calc(100vh - 240px));
+  min-height: 480px;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #2f2f2f;
+  padding: 16px;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+  contain: layout paint;
+}
+
+.stageMaximized .viewer {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.documentPages {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  box-sizing: border-box;
+}
+
+.compositePage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  flex-shrink: 0;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.headerArea {
+  position: relative;
+  width: 100%;
+  flex-shrink: 0;
+  background: white;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.pdfContentArea {
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: white;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.pdfPage {
+  position: relative;
+  background: white;
+  flex-shrink: 0;
+  line-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.pageCanvas,
+.pageCanvas canvas,
+.pdfPage canvas,
+.pdfPage .react-pdf__Page {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.pageCanvas {
+  overflow: visible;
+}
+
+.annotationLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: transparent;
+}
+
+.annotationLayer > * {
+  pointer-events: auto;
+}
+
+.loading,
+.error {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 15px;
+}
+
+@media (max-width: 900px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .viewer {
+    height: min(680px, calc(100vh - 220px));
+    min-height: 450px;
+    padding: 10px;
+  }
+
+  .documentPages {
+    gap: 18px;
+  }
+}
+
+@media (max-width: 600px) {
+  .stageMaximized {
+    inset: 0;
+    padding: 6px;
+  }
+
+  .toolbar {
+    align-items: flex-start;
+  }
+
+  .viewer {
+    height: min(600px, calc(100vh - 180px));
+
+    min-height: 400px;
+
+    padding: 8px;
+  }
+
+  .documentPages {
+    gap: 14px;
+  }
 }
