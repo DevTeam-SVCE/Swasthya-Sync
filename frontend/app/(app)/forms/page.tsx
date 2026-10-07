@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { FileText, ListChecks, Plus, Search, UserPlus, X } from "lucide-react";
+import Image from "next/image";
+import { Building2, FileText, ListChecks, Plus, Search, UserPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -20,6 +21,7 @@ import { useToast } from "@/components/ui/Toast";
 import { fetchPatient, fetchPatients } from "@/lib/patients";
 import { fetchAdmissions } from "@/lib/ipd";
 import { createPatientForm, fetchFormTemplate, fetchFormTemplates, fetchPatientForm, fetchPatientForms, updatePatientForm, type FormTemplate, type PatientForm } from "@/lib/forms";
+import { brandingAssetUrl, fetchHospitalSettings, type HospitalSettings } from "@/lib/settings";
 import type { Patient } from "@/types/patients";
 import type { IPDAdmission } from "@/types/ipd";
 import styles from "./page.module.css";
@@ -28,8 +30,9 @@ interface StrokePoint { x: number; y: number; }
 interface Stroke { pageNumber?: number; points: StrokePoint[]; color?: string; thickness?: number; }
 
 export default function FormsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { success, error: toastError } = useToast();
+  const [hospitalSettings, setHospitalSettings] = useState<HospitalSettings | null>(null);
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [forms, setForms] = useState<PatientForm[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<FormTemplate | null>(null);
@@ -59,6 +62,18 @@ export default function FormsPage() {
   const strokesRef = useRef<Stroke[]>([]);
   const annotationHistoryRef = useRef<Record<number, { undo: Stroke[][]; redo: Stroke[][] }>>({});
 
+useEffect(() => {
+  if (!token) return;
+
+  let active = true;
+  void fetchHospitalSettings(token).then(({ settings }) => {
+    if (active) setHospitalSettings(settings);
+  }).catch(() => {
+    if (active) setHospitalSettings(null);
+  });
+
+  return () => { active = false; };
+}, [token]);
   function resetAnnotationHistory() {
     annotationHistoryRef.current = {};
   }
@@ -360,7 +375,39 @@ export default function FormsPage() {
         <Card className={styles.panel} noPadding>
           {!selectedTemplate ? <div className={styles.empty}><div><FileText size={32} /><p>Select a template to view the actual PDF.</p></div></div> : <div className={styles.viewer}>
             <div className={styles.viewerHeader}><div><h2 className={styles.sectionTitle}>{selectedTemplate.name}</h2><p className={styles.sectionSubtitle}>{selectedTemplate.category}{selectedTemplate.subcategory ? ` · ${selectedTemplate.subcategory}` : ""}</p>{selectedPatient && <p className={styles.muted}>Patient: {selectedPatient.fullName} · {autoSaveStatus}</p>}</div><div className={styles.viewerActions}><a href={pdfUrl || "#"} target="_blank" rel="noreferrer"><Button type="button" variant="secondary">Open PDF</Button></a>{!openedFormId && <Button type="button" leftIcon={<UserPlus size={15} />} onClick={() => document.getElementById("use-for-patient")?.scrollIntoView({ behavior: "smooth" })}>Use for patient</Button>}</div></div>
-            {pdfUrl ? <PdfStage src={pdfUrl} title={selectedTemplate.name} header={<PatientHeader patient={selectedPatient} admission={patientAdmission} templateTitle={formTitle} />} annotation={<AnnotationCanvas strokes={strokes} onChange={commitPageStrokes} onSave={saveCurrentForm} onUndo={undoPageStrokes} onRedo={redoPageStrokes} canUndo={(pageNumber) => Boolean(annotationHistoryRef.current[pageNumber]?.undo.length)} canRedo={(pageNumber) => Boolean(annotationHistoryRef.current[pageNumber]?.redo.length)} saving={saving} />} /> : <div className={styles.empty}>Loading PDF…</div>}
+{pdfUrl ? (
+  <PdfStage
+    src={pdfUrl}
+    title={selectedTemplate.name}
+    header={
+      <PatientHeader
+        patient={selectedPatient}
+        admission={patientAdmission}
+        templateTitle={formTitle}
+        hospitalSettings={hospitalSettings}
+        fallbackHospitalName={user?.hospitalName ?? ""}
+      />
+    }
+    annotation={
+      <AnnotationCanvas
+        strokes={strokes}
+        onChange={commitPageStrokes}
+        onSave={saveCurrentForm}
+        onUndo={undoPageStrokes}
+        onRedo={redoPageStrokes}
+        canUndo={(pageNumber) =>
+          Boolean(annotationHistoryRef.current[pageNumber]?.undo.length)
+        }
+        canRedo={(pageNumber) =>
+          Boolean(annotationHistoryRef.current[pageNumber]?.redo.length)
+        }
+        saving={saving}
+      />
+    }
+  />
+) : (
+  <div className={styles.empty}>Loading PDF…</div>
+)}
             <div id="use-for-patient" className={styles.formArea}><h3 className={styles.sectionTitle}>{selectedPatient ? `Patient form · ${selectedPatient.fullName}` : "Create patient form"}</h3>{!selectedPatient && <><div className={styles.search}><Input label="Search existing patient" placeholder="Name, UHID, or mobile" value={patientSearch} onChange={(event) => setPatientSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPatients(); } }} /></div>{patients.length > 0 && <div className={styles.list}>{patients.map((patient) => <button type="button" className={styles.template} key={patient.id} onClick={() => { setSelectedPatient(patient); setPatients([]); }}><div className={styles.templateName}>{patient.fullName}</div><div className={styles.templateMeta}>{patient.uhid} · {patient.department}</div></button>)}</div>}</>}{selectedPatient && <div className={styles.selectedPatient}><strong>{selectedPatient.fullName}</strong><span className={styles.muted}>{selectedPatient.uhid}</span><span className={styles.muted}>Auto-save: {autoSaveStatus}</span></div>}<Textarea label="Notes / data entry" placeholder="Record the information entered for this patient form. Changes save automatically." value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />{selectedPatient && openedFormId && <div className={styles.formActions}><Button type="button" loading={saving} onClick={() => void saveCurrentForm()}>Save form</Button><Button type="button" variant="ghost" onClick={clearAnnotations}>Clear pen marks</Button></div>}{!forms.some((form) => form.templateId === selectedTemplate.id && form.patientId === selectedPatient?.id) && <div className={styles.formActions}><Button type="button" loading={saving} onClick={() => void createFormForPatient()}>Create patient form</Button></div>}</div>
             {selectedPatient && <div className={styles.history}><h3 className={styles.sectionTitle}>Completed form history for {selectedPatient.fullName}</h3>{forms.length === 0 ? <p className={styles.muted}>No patient-specific forms yet.</p> : forms.map((form) => <div className={styles.historyRow} key={form.id}><div><strong>{form.templateName}</strong><div className={styles.muted}>{form.category} · {new Date(form.createdAt).toLocaleDateString("en-IN")}</div></div><div className={styles.viewerActions}><Badge variant={form.status === "COMPLETED" ? "success" : "warning"} size="sm">{form.status}</Badge><Button type="button" variant="ghost" size="sm" onClick={() => reopenPatientForm(form)}>Open</Button></div></div>)}</div>}
           </div>}
@@ -395,31 +442,117 @@ function getPatientAgeLabel(patient: Patient | null) {
   return `${years} Y`;
 }
 
-function PatientHeader({ patient, admission, templateTitle }: { patient: Patient | null; admission: IPDAdmission | null; templateTitle: string }) {
+function PatientHeader({
+  patient,
+  admission,
+  templateTitle,
+  hospitalSettings,
+  fallbackHospitalName,
+}: {
+  patient: Patient | null;
+  admission: IPDAdmission | null;
+  templateTitle: string;
+  hospitalSettings: HospitalSettings | null;
+  fallbackHospitalName: string;
+}) {
   if (!patient) return null;
+
   const patientAge = getPatientAgeLabel(patient);
+  const hospitalName =
+    hospitalSettings?.hospitalName.trim() ||
+    fallbackHospitalName ||
+    "Hospital";
+
+  const hospitalDetails = [
+    hospitalSettings?.tagline,
+    hospitalSettings?.address,
+    hospitalSettings?.phone,
+    hospitalSettings?.email,
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join(" · ");
+
+  const primaryLogoUrl = hospitalSettings?.primaryLogoUrl
+    ? brandingAssetUrl(hospitalSettings.primaryLogoUrl)
+    : "";
+
+  const accreditationLogoUrl = hospitalSettings?.accreditationLogoUrl
+    ? brandingAssetUrl(hospitalSettings.accreditationLogoUrl)
+    : "";
+
+  const imageMode = hospitalSettings?.brandingMode === "image";
+
+  const headerImageUrl =
+    imageMode && hospitalSettings?.headerImageUrl
+      ? brandingAssetUrl(hospitalSettings.headerImageUrl)
+      : "";
+
+  const footerImageUrl =
+    imageMode && hospitalSettings?.footerImageUrl
+      ? brandingAssetUrl(hospitalSettings.footerImageUrl)
+      : "";
 
   return <div className={styles.patientHeaderOverlay} aria-label="Patient form header">
-    <div className={styles.curaHeaderBrandRow}>
-      <div className={styles.curaBadge}>CURA</div>
-      <div className={styles.curaBranding}>
-        <strong>CURA Hospitals</strong>
-        <span>Patient form record</span>
+    <div className={styles.patientHeaderBrandRow}>
+      {headerImageUrl && <Image className={styles.patientHeaderImage} src={headerImageUrl} alt="" aria-hidden="true" width={1200} height={40} unoptimized />}
+      {primaryLogoUrl ? <Image className={styles.primaryHospitalLogo} src={primaryLogoUrl} alt="Hospital logo" width={56} height={32} unoptimized /> : <Building2 className={styles.primaryHospitalLogoFallback} size={24} aria-hidden="true" />}
+      <div className={styles.hospitalBranding}>
+        <strong>{hospitalName}</strong>
+        {hospitalDetails && <span title={hospitalDetails}>{hospitalDetails}</span>}
       </div>
+      {accreditationLogoUrl && <Image className={styles.accreditationHospitalLogo} src={accreditationLogoUrl} alt="Accreditation / certification logo" width={56} height={32} unoptimized />}
     </div>
 
-    <div className={styles.curaHeaderInfoGrid}>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Patient Name</span><strong>{patient.fullName}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>UHID</span><strong>{patient.uhid}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Age / Sex</span><strong>{patientAge} / {patient.gender || "Not specified"}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>DOB</span><strong>{formatDisplayDate(patient.dateOfBirth)}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Consultant</span><strong>{patient.attendingDoctor || "Not assigned"}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Department</span><strong>{patient.department || "Not assigned"}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>IP Number</span><strong>{admission?.admissionNumber || "Not assigned"}</strong></div>
-      <div className={styles.curaInfoBlock}><span className={styles.curaLabel}>Date of Admission</span><strong>{admission ? formatDisplayDate(admission.admissionDate) : "Not available"}</strong></div>
+<div className={styles.patientHeaderInfoGrid}>
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>Patient Name</span>
+    <strong>{patient.fullName}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>UHID</span>
+    <strong>{patient.uhid}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>Age / Sex</span>
+    <strong>{patientAge} / {patient.gender || "Not specified"}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>DOB</span>
+    <strong>{formatDisplayDate(patient.dateOfBirth)}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>Consultant</span>
+    <strong>{patient.attendingDoctor || "Not assigned"}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>Department</span>
+    <strong>{patient.department || "Not assigned"}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>IP Number</span>
+    <strong>{admission?.admissionNumber || "Not assigned"}</strong>
+  </div>
+
+  <div className={styles.patientHeaderInfoBlock}>
+    <span className={styles.patientHeaderLabel}>Date of Admission</span>
+    <strong>
+      {admission
+        ? formatDisplayDate(admission.admissionDate)
+        : "Not available"}
+    </strong>
+  </div>
     </div>
 
-    <div className={styles.formTitleBanner}>{templateTitle}</div>
+    <div className={styles.formTitleBanner}>
+      {footerImageUrl && <Image className={styles.patientHeaderFooterImage} src={footerImageUrl} alt="" aria-hidden="true" width={1200} height={42} unoptimized />}
+      <span className={styles.formTitleText}>{templateTitle}</span>
+    </div>
   </div>;
 }
 
