@@ -125,6 +125,7 @@
   box-sizing: border-box;
   overscroll-behavior: contain;
   contain: layout paint;
+  touch-action: pan-y;
 }
 
 .stageMaximized .viewer {
@@ -213,6 +214,11 @@
 
 .annotationLayer > * {
   pointer-events: auto;
+}
+
+.annotationLayerHand,
+.annotationLayerHand > * {
+  pointer-events: none;
 }
 
 .loading,

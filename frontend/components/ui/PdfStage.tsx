@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Eraser, Maximize2, Minimize2, PenLine, Redo2, Save, Undo2 } from "lucide-react";
+import { Eraser, Hand, Maximize2, Minimize2, PenLine, Redo2, Save, Undo2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import styles from "./PdfStage.module.css";
 
@@ -44,6 +44,7 @@ type PdfStageProps = {
   pdfUrl?: string;
   patient?: unknown;
   formTitle?: string;
+  onSwipe?: (direction: -1 | 1) => Promise<void> | void;
   renderAnnotations?: (
     pageNumber: number,
     scale: number,
@@ -60,22 +61,27 @@ export function PdfStage({
   pdfUrl,
   patient,
   formTitle,
+  onSwipe,
   renderAnnotations,
 }: PdfStageProps) {
   const resolvedSrc = src ?? pdfUrl ?? "";
   const viewerRef = useRef<HTMLDivElement>(null);
   const headerAreaRef = useRef<HTMLDivElement>(null);
-  const [pageCount, setPageCount] = useState(0);
+  const [loadedDocument, setLoadedDocument] = useState<{ key: string; pageCount: number } | null>(null);
   const [pageDimensions, setPageDimensions] = useState<Record<number, PageDimensions>>({});
   const [containerWidth, setContainerWidth] = useState(800);
   const [headerContentHeight, setHeaderContentHeight] = useState(0);
   const [activePage, setActivePage] = useState(1);
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
+  const [tool, setTool] = useState<"hand" | "pen" | "eraser">("pen");
   const [penColor, setPenColor] = useState("#2563eb");
   const [penThickness, setPenThickness] = useState(2);
   const [eraserThickness, setEraserThickness] = useState(18);
   const [maximized, setMaximized] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeInProgressRef = useRef(false);
   const documentKey = resolvedSrc || "empty-pdf";
+  const pageCount = loadedDocument?.key === documentKey ? loadedDocument.pageCount : 0;
   const documentTitle = title ?? formTitle ?? (patient ? "Patient form" : "Form");
   const annotationProps = React.isValidElement(annotation)
     ? annotation.props as AnnotationCanvasProps
@@ -155,11 +161,21 @@ export function PdfStage({
   };
 
   const resolvedContainerWidth = containerWidth;
+  const navigateBySwipe = async (deltaX: number, deltaY: number) => {
+    if (!onSwipe || tool !== "hand" || swipeInProgressRef.current || Math.abs(deltaX) < 60 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    swipeInProgressRef.current = true;
+    try {
+      await onSwipe(deltaX < 0 ? 1 : -1);
+    } finally {
+      swipeInProgressRef.current = false;
+    }
+  };
 
   return (
     <div className={`${styles.stage} ${maximized ? styles.stageMaximized : ""}`}>
       {annotationProps && <div className={styles.toolbar} role="toolbar" aria-label="PDF annotation tools">
         <div className={styles.toolGroup}>
+          {onSwipe && <button type="button" className={`${styles.toolButton} ${tool === "hand" ? styles.toolButtonActive : ""}`} onClick={() => setTool("hand")} aria-label="Hand / swipe between forms" aria-pressed={tool === "hand"} title="Hand / swipe between forms"><Hand size={16} /><span>Hand</span></button>}
           <button type="button" className={`${styles.toolButton} ${tool === "pen" ? styles.toolButtonActive : ""}`} onClick={() => setTool("pen")} aria-label="Pen" aria-pressed={tool === "pen"} title="Pen"><PenLine size={16} /><span>Pen</span></button>
           <button type="button" className={`${styles.toolButton} ${tool === "eraser" ? styles.toolButtonActive : ""}`} onClick={() => setTool("eraser")} aria-label="Eraser" aria-pressed={tool === "eraser"} title="Eraser"><Eraser size={16} /><span>Eraser</span></button>
         </div>
@@ -173,12 +189,34 @@ export function PdfStage({
           <button type="button" className={styles.iconButton} onClick={() => setMaximized((value) => !value)} aria-label={maximized ? "Minimize PDF editor" : "Maximize PDF editor"} title={maximized ? "Minimize" : "Maximize"}>{maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         </div>
       </div>}
-      <div ref={viewerRef} className={styles.viewer}>
+      <div
+        ref={viewerRef}
+        className={styles.viewer}
+        onTouchStart={(event) => {
+          if (onSwipe && tool === "hand") touchStartRef.current = { x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0 };
+        }}
+        onTouchEnd={(event) => {
+          const start = touchStartRef.current;
+          touchStartRef.current = null;
+          if (start) void navigateBySwipe((event.changedTouches[0]?.clientX ?? start.x) - start.x, (event.changedTouches[0]?.clientY ?? start.y) - start.y);
+        }}
+        onPointerDown={(event) => {
+          if (onSwipe && tool === "hand" && event.pointerType !== "touch" && event.button === 0) {
+            pointerStartRef.current = { x: event.clientX, y: event.clientY };
+          }
+        }}
+        onPointerUp={(event) => {
+          const start = pointerStartRef.current;
+          pointerStartRef.current = null;
+          if (start) void navigateBySwipe(event.clientX - start.x, event.clientY - start.y);
+        }}
+        onPointerCancel={() => { pointerStartRef.current = null; }}
+      >
         <Document
           key={documentKey}
           file={resolvedSrc}
-          onLoadSuccess={({ numPages }) => setPageCount(numPages)}
-          onLoadError={() => setPageCount(0)}
+          onLoadSuccess={({ numPages }) => setLoadedDocument({ key: documentKey, pageCount: numPages })}
+          onLoadError={() => setLoadedDocument({ key: documentKey, pageCount: 0 })}
           loading={<div className={styles.loading}>Loading form...</div>}
           error={<div className={styles.error}>Unable to load PDF.</div>}
         >
@@ -204,7 +242,7 @@ export function PdfStage({
                 pageNumber,
                 strokes: pageStrokes,
                 onChange: (nextStrokes) => handlePageStrokeChange(pageNumber, nextStrokes),
-                tool,
+                tool: tool === "hand" ? "pen" : tool,
                 penColor,
                 penThickness,
                 eraserThickness,
@@ -236,7 +274,11 @@ export function PdfStage({
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
                     />
-                    {annotation ? <div className={styles.annotationLayer}>{pageAnnotation}</div> : null}
+                    {annotation ? (
+                      <div className={`${styles.annotationLayer} ${tool === "hand" ? styles.annotationLayerHand : ""}`}>
+                        {pageAnnotation}
+                      </div>
+                    ) : null}
                     {renderAnnotations?.(pageNumber, pdfScale, pdfPageWidth, pdfPageHeight)}
                   </div>
                 </div>

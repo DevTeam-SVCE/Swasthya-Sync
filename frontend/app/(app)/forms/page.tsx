@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Building2, FileText, ListChecks, Plus, Search, UserPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -29,7 +30,21 @@ import styles from "./page.module.css";
 interface StrokePoint { x: number; y: number; }
 interface Stroke { pageNumber?: number; points: StrokePoint[]; color?: string; thickness?: number; }
 
+const formCategoryOrder = [
+  "Admission",
+  "Nursing",
+  "Assessment",
+  "Consent",
+  "Discharge & End of Life",
+  "Infection Control",
+  "Medication",
+  "Monitoring",
+  "Surgery & OT",
+  "Transfer & Referral",
+];
+
 export default function FormsPage() {
+  const router = useRouter();
   const { token, user } = useAuth();
   const { success, error: toastError } = useToast();
   const [hospitalSettings, setHospitalSettings] = useState<HospitalSettings | null>(null);
@@ -53,6 +68,7 @@ export default function FormsPage() {
   const [pdfUrl, setPdfUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [switchingForm, setSwitchingForm] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState("Ready");
   const [error, setError] = useState("");
   const [checklist, setChecklist] = useState<FormTemplate[]>([]);
@@ -61,6 +77,7 @@ export default function FormsPage() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
   const annotationHistoryRef = useRef<Record<number, { undo: Stroke[][]; redo: Stroke[][] }>>({});
+  const switchingFormRef = useRef(false);
 
 useEffect(() => {
   if (!token) return;
@@ -190,16 +207,18 @@ useEffect(() => {
   const saveCurrentForm = useCallback(async (silent = false) => {
     if (!token || !currentForm) {
       if (!silent) toastError("Open a patient form first.", "Save is available for an existing patient form instance.");
-      return;
+      return false;
     }
     try {
       if (!silent) setSaving(true);
       await updatePatientForm(token, currentForm.id, { fieldData: { ...currentForm.fieldData, notes, strokes } });
       setAutoSaveStatus("Saved");
       if (!silent) success("Form saved.", "Notes and annotations were saved to this patient form.");
+      return true;
     } catch (requestError) {
       setAutoSaveStatus("Save failed");
-      if (!silent) toastError("Unable to save form.", requestError instanceof Error ? requestError.message : "Please try again.");
+      toastError(silent ? "Unable to save form before switching." : "Unable to save form.", requestError instanceof Error ? requestError.message : "Please try again.");
+      return false;
     } finally {
       if (!silent) setSaving(false);
     }
@@ -216,6 +235,22 @@ useEffect(() => {
 
   const categories = useMemo(() => Array.from(new Set(templates.map((item) => item.category))).sort(), [templates]);
   const subcategories = useMemo(() => Array.from(new Set(templates.filter((item) => !category || item.category === category).map((item) => item.subcategory).filter(Boolean) as string[])).sort(), [templates, category]);
+  const editorTemplates = useMemo(
+    () => {
+      if (!selectedTemplate) return [];
+      const categoryOrder = new Map(formCategoryOrder.map((name, index) => [name, index]));
+      return [...templates].sort((left, right) => {
+        const leftCategory = categoryOrder.get(left.category) ?? formCategoryOrder.length;
+        const rightCategory = categoryOrder.get(right.category) ?? formCategoryOrder.length;
+        return leftCategory - rightCategory
+          || left.category.localeCompare(right.category)
+          || (left.subcategory ?? "").localeCompare(right.subcategory ?? "")
+          || left.name.localeCompare(right.name);
+      });
+    },
+    [templates, selectedTemplate]
+  );
+  const editorTemplateIndex = editorTemplates.findIndex((item) => item.id === selectedTemplate?.id);
   const checkedIds = useMemo(() => new Set(checklist.map((item) => item.id)), [checklist]);
   const shownCheckedCount = templates.filter((item) => checkedIds.has(item.id)).length;
   const allShownChecked = templates.length > 0 && shownCheckedCount === templates.length;
@@ -345,6 +380,54 @@ useEffect(() => {
     }
   };
 
+  const navigateEditorForm = async (nextTemplate: FormTemplate) => {
+    if (!token || !selectedPatient || !selectedTemplate || nextTemplate.id === selectedTemplate.id || switchingFormRef.current || saving) return;
+    switchingFormRef.current = true;
+    setSwitchingForm(true);
+
+    try {
+      if (currentForm) {
+        if (!(await saveCurrentForm(true))) return;
+      } else if (notes.trim() || strokesRef.current.length > 0) {
+        setSaving(true);
+        const created = await createPatientForm(token, {
+          patientId: selectedPatient.id,
+          templateId: selectedTemplate.id,
+          fieldData: { notes, strokes: strokesRef.current },
+        });
+        openPatientFormState(created.form);
+        setForms((previous) => [...previous.filter((form) => form.id !== created.form.id), created.form]);
+        setFormReady(true);
+      }
+
+      const response = await fetchPatientForms(token, selectedPatient.id);
+      setForms(response.forms);
+      selectTemplate(nextTemplate);
+      const existingForm = response.forms.find((form) => form.templateId === nextTemplate.id);
+      if (existingForm) openPatientFormState(existingForm);
+      setFormReady(true);
+      setReturnCategory(nextTemplate.category);
+      const params = new URLSearchParams({
+        patientId: selectedPatient.id,
+        templateId: nextTemplate.id,
+        category: nextTemplate.category,
+      });
+      if (existingForm) params.set("formId", existingForm.id);
+      router.replace(`/forms?${params.toString()}`);
+    } catch (requestError) {
+      toastError("Unable to switch forms.", requestError instanceof Error ? requestError.message : "Please try again.");
+    } finally {
+      setSaving(false);
+      switchingFormRef.current = false;
+      setSwitchingForm(false);
+    }
+  };
+
+  const moveEditorForm = (direction: -1 | 1) => {
+    const nextTemplate = editorTemplates[editorTemplateIndex + direction];
+    return nextTemplate ? navigateEditorForm(nextTemplate) : Promise.resolve();
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -375,6 +458,14 @@ useEffect(() => {
         <Card className={styles.panel} noPadding>
           {!selectedTemplate ? <div className={styles.empty}><div><FileText size={32} /><p>Select a template to view the actual PDF.</p></div></div> : <div className={styles.viewer}>
             <div className={styles.viewerHeader}><div><h2 className={styles.sectionTitle}>{selectedTemplate.name}</h2><p className={styles.sectionSubtitle}>{selectedTemplate.category}{selectedTemplate.subcategory ? ` · ${selectedTemplate.subcategory}` : ""}</p>{selectedPatient && <p className={styles.muted}>Patient: {selectedPatient.fullName} · {autoSaveStatus}</p>}</div><div className={styles.viewerActions}><a href={pdfUrl || "#"} target="_blank" rel="noreferrer"><Button type="button" variant="secondary">Open PDF</Button></a>{!openedFormId && <Button type="button" leftIcon={<UserPlus size={15} />} onClick={() => document.getElementById("use-for-patient")?.scrollIntoView({ behavior: "smooth" })}>Use for patient</Button>}</div></div>
+            {returnPatientId && editorTemplates.length > 1 && <nav className={styles.formSwipeNav} aria-label="Patient form navigation">
+              <Button type="button" variant="secondary" size="sm" disabled={editorTemplateIndex <= 0 || switchingForm || saving} onClick={() => void moveEditorForm(-1)}>Previous form</Button>
+              <div className={styles.formSwipeTabs} role="tablist" aria-label="Forms in this category">
+                {editorTemplates.map((template) => <button key={template.id} type="button" role="tab" aria-selected={template.id === selectedTemplate.id} className={[styles.formSwipeTab, template.id === selectedTemplate.id ? styles.formSwipeTabActive : ""].filter(Boolean).join(" ")} onClick={() => void navigateEditorForm(template)} disabled={switchingForm || saving} title={template.name}><span>{template.name}</span><small>{template.subcategory || template.category}</small></button>)}
+              </div>
+              <Button type="button" variant="secondary" size="sm" disabled={editorTemplateIndex < 0 || editorTemplateIndex >= editorTemplates.length - 1 || switchingForm || saving} onClick={() => void moveEditorForm(1)}>Next form</Button>
+              <span className={styles.formSwipeHint}>Swipe left or right in Hand mode to switch forms. Changes save before switching.</span>
+            </nav>}
 {pdfUrl ? (
   <PdfStage
     src={pdfUrl}
@@ -404,6 +495,7 @@ useEffect(() => {
         saving={saving}
       />
     }
+    onSwipe={returnPatientId && editorTemplates.length > 1 ? moveEditorForm : undefined}
   />
 ) : (
   <div className={styles.empty}>Loading PDF…</div>
@@ -724,4 +816,3 @@ function segmentDistance(a: StrokePoint, b: StrokePoint, c: StrokePoint, d: Stro
   };
   return Math.min(pointDistance(a, c, d), pointDistance(b, c, d), pointDistance(c, a, b), pointDistance(d, a, b));
 }
-
