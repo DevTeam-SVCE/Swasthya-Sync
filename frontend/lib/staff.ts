@@ -17,6 +17,8 @@ export interface StaffMember extends Record<string, unknown> {
   seniority: string | null;
   qualification: string | null;
   dateOfJoining: string | null;
+  experienceYears: number | null;
+  workingSchedule: string | null;
   status: StaffStatus;
   createdAt: string;
   updatedAt: string;
@@ -33,6 +35,8 @@ export interface StaffInput {
   seniority: string;
   qualification: string;
   dateOfJoining: string;
+  experienceYears?: string;
+  workingSchedule?: string;
   password?: string;
   confirmPassword?: string;
 }
@@ -48,6 +52,8 @@ export interface StaffProfileInput {
   seniority?: string;
   qualification?: string;
   dateOfJoining?: string;
+  experienceYears?: string;
+  workingSchedule?: string;
 }
 
 export interface StaffLoginInput {

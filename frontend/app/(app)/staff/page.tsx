@@ -9,6 +9,7 @@ import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { Drawer } from "@/components/ui/Drawer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -39,12 +40,22 @@ const blankInput: StaffInput = {
   seniority: "",
   qualification: "",
   dateOfJoining: "",
+  experienceYears: "",
+  workingSchedule: "",
   password: "",
   confirmPassword: "",
 };
 
 const emptyStats = { admins: 0, doctors: 0, frontDesk: 0, staff: 0 };
 const emptyOptions: StaffOptions = { roles: ["ADMIN", "DOCTOR", "FRONT_DESK", "STAFF"], statuses: ["ACTIVE", "SUSPENDED"], seniorities: [], departments: [], designations: [] };
+const staffKinds = [
+  { id: "DOCTOR", label: "Doctor", role: "DOCTOR", designation: "GENERAL PHYSICIAN", department: "General Medicine" },
+  { id: "NURSE", label: "Nurse", role: "STAFF", designation: "STAFF NURSE", department: "Nursing" },
+  { id: "RECEPTIONIST", label: "Receptionist", role: "FRONT_DESK", designation: "PATIENT CORDINATOR", department: "Outpatient" },
+  { id: "LAB_TECHNICIAN", label: "Lab Technician", role: "STAFF", designation: "LAB TECH", department: "Laboratory" },
+  { id: "PHARMACIST", label: "Pharmacist", role: "STAFF", designation: "PHARMACIST", department: "Pharmacy" },
+] as const;
+type StaffKind = typeof staffKinds[number]["id"];
 
 function roleLabel(role: StaffRole) {
   if (role === "ADMIN") return "Admin";
@@ -76,6 +87,7 @@ export default function StaffManagementPage() {
   const [notice, setNotice] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<StaffMember | null>(null);
+  const [staffKind, setStaffKind] = useState<StaffKind>("DOCTOR");
   const [form, setForm] = useState<StaffInput>(blankInput);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -120,7 +132,8 @@ export default function StaffManagementPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm(blankInput);
+    setStaffKind("DOCTOR");
+    setForm({ ...blankInput, role: "DOCTOR", designation: "GENERAL PHYSICIAN", department: "General Medicine" });
     setFormError("");
     setDrawerOpen(true);
   };
@@ -138,6 +151,8 @@ export default function StaffManagementPage() {
       seniority: member.seniority ?? "",
       qualification: member.qualification ?? "",
       dateOfJoining: member.dateOfJoining ?? "",
+      experienceYears: member.experienceYears === null ? "" : String(member.experienceYears ?? ""),
+      workingSchedule: member.workingSchedule ?? "",
     });
     setFormError("");
     setDrawerOpen(true);
@@ -267,7 +282,7 @@ export default function StaffManagementPage() {
         {staff.length === 0 && !loading && !error ? <div className={styles.empty}><EmptyState title={total === 0 ? "No staff members found." : "No matching staff members."} description={total === 0 ? "Create a login account and add its hospital staff information." : "Try changing the search or filters."} icon={<UserRound size={24} />} action={total === 0 ? <Button leftIcon={<Plus size={15} />} onClick={openCreate}>Create Staff Login</Button> : undefined} /></div> : <div className={styles.tableWrap}><DataTable columns={columns} data={staff} loading={loading} rowKey={(member) => member.id} emptyTitle="No staff members found." /></div>}
       </Card>
 
-      <StaffDrawer open={drawerOpen} editing={editing} form={form} options={options} saving={saving} error={formError} onClose={() => setDrawerOpen(false)} onChange={setForm} onSubmit={submitStaff} />
+      <StaffDrawer open={drawerOpen} editing={editing} form={form} options={options} staffKind={staffKind} saving={saving} error={formError} onClose={() => setDrawerOpen(false)} onChange={setForm} onKindChange={setStaffKind} onSubmit={submitStaff} />
       <Drawer open={!!loginFor} onClose={() => setLoginFor(null)} title="Create Staff Login" subtitle={loginFor ? `Link a login to ${loginFor.fullName} (${loginFor.staffId || "no Staff ID"}).` : undefined} placement="right" size="md" footer={<div className={styles.drawerFooter}><Button variant="secondary" onClick={() => setLoginFor(null)} disabled={loginSaving}>Cancel</Button><Button type="submit" form="staff-login-form" loading={loginSaving}>Create login</Button></div>}>
         <form id="staff-login-form" className={styles.form} onSubmit={submitLogin}>
           {loginError && <div className={styles.formError} role="alert">{loginError}</div>}
@@ -286,43 +301,78 @@ function StaffDrawer({
   editing,
   form,
   options,
+  staffKind,
   saving,
   error,
   onClose,
   onChange,
+  onKindChange,
   onSubmit,
 }: {
   open: boolean;
   editing: StaffMember | null;
   form: StaffInput;
   options: StaffOptions;
+  staffKind: StaffKind;
   saving: boolean;
   error: string;
   onClose: () => void;
   onChange: (value: StaffInput | ((current: StaffInput) => StaffInput)) => void;
+  onKindChange: (kind: StaffKind) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const roleOptions = options.roles.map((role) => ({ value: role, label: roleLabel(role) }));
-  return <Drawer open={open} onClose={onClose} title={editing ? "Edit staff member" : "Create Staff Login"} subtitle={editing ? "Update account and staff information." : "Create an account that can sign in with the existing hospital login."} placement="right" size="xl" footer={<div className={styles.drawerFooter}><Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button><Button type="submit" form="staff-form" loading={saving}>{editing ? "Save changes" : "Create login"}</Button></div>}>
-    <form id="staff-form" className={styles.form} onSubmit={onSubmit}>
+  const selectedKind = staffKinds.find((kind) => kind.id === staffKind);
+  const departmentOptions = [...new Set([...options.departments, ...(selectedKind ? [selectedKind.department] : [])])];
+  const designationOptions = [...new Set([...options.designations, ...(selectedKind ? [selectedKind.designation] : [])])];
+  const contents = <form id="staff-form" className={styles.form} onSubmit={onSubmit}>
       {error && <div className={styles.formError} role="alert">{error}</div>}
+      {!editing && <fieldset className={styles.kindFieldset}>
+        <legend className={styles.kindLegend}>Staff type <span aria-hidden="true">*</span></legend>
+        <div className={styles.kindOptions}>
+          {staffKinds.map((kind) => <button key={kind.id} type="button" className={[styles.kindOption, staffKind === kind.id ? styles.kindOptionActive : ""].filter(Boolean).join(" ")} aria-pressed={staffKind === kind.id} onClick={() => {
+            onKindChange(kind.id);
+            onChange((current) => ({ ...current, role: kind.role, designation: kind.designation, department: kind.department }));
+          }}>{kind.label}</button>)}
+        </div>
+      </fieldset>}
       <div className={styles.formGrid}>
         <Input label="Full Name" autoComplete="name" maxLength={160} required value={form.fullName} onChange={(event) => onChange((current) => ({ ...current, fullName: event.target.value }))} />
         <Input label="Staff ID" maxLength={64} required={!editing} value={form.staffId} onChange={(event) => onChange((current) => ({ ...current, staffId: event.target.value }))} />
         {(!editing || editing.userId) && <Input label="Email / Login ID" type="email" autoComplete="email" required={!editing} value={form.email} onChange={(event) => onChange((current) => ({ ...current, email: event.target.value }))} />}
         <Input label="Phone" type="tel" autoComplete="tel" required={!editing} value={form.phone} onChange={(event) => onChange((current) => ({ ...current, phone: event.target.value }))} />
         <Select label="Main Role" required value={form.role} options={roleOptions} onChange={(event) => onChange((current) => ({ ...current, role: event.target.value as StaffRole }))} />
-        <Select label="Designation" required={!editing} value={form.designation} options={[{ value: "", label: "Not assigned" }, ...options.designations.map((value) => ({ value, label: value }))]} onChange={(event) => onChange((current) => ({ ...current, designation: event.target.value }))} />
-        <Select label="Department" required={!editing} value={form.department} options={[{ value: "", label: "Not assigned" }, ...options.departments.map((value) => ({ value, label: value }))]} onChange={(event) => onChange((current) => ({ ...current, department: event.target.value }))} />
+        <Select label="Designation" required={!editing} value={form.designation} options={[{ value: "", label: "Not assigned" }, ...designationOptions.map((value) => ({ value, label: value }))]} onChange={(event) => onChange((current) => ({ ...current, designation: event.target.value }))} />
+        <Select label="Department" required={!editing} value={form.department} options={[{ value: "", label: "Not assigned" }, ...departmentOptions.map((value) => ({ value, label: value }))]} onChange={(event) => onChange((current) => ({ ...current, department: event.target.value }))} />
         <Select label="Seniority" value={form.seniority} options={[{ value: "", label: "Not specified" }, ...options.seniorities.map((value) => ({ value, label: value }))]} onChange={(event) => onChange((current) => ({ ...current, seniority: event.target.value }))} />
-        <Input label="Qualification" maxLength={200} required={!editing} value={form.qualification} onChange={(event) => onChange((current) => ({ ...current, qualification: event.target.value }))} />
+        {editing && <Input label="Qualification" maxLength={200} value={form.qualification} onChange={(event) => onChange((current) => ({ ...current, qualification: event.target.value }))} />}
         <Input label="Date of Joining" type="date" required={!editing} value={form.dateOfJoining} onChange={(event) => onChange((current) => ({ ...current, dateOfJoining: event.target.value }))} />
         {!editing && <>
           <Input label="Password" type="password" autoComplete="new-password" minLength={8} required value={form.password ?? ""} onChange={(event) => onChange((current) => ({ ...current, password: event.target.value }))} />
           <Input label="Confirm Password" type="password" autoComplete="new-password" minLength={8} required value={form.confirmPassword ?? ""} onChange={(event) => onChange((current) => ({ ...current, confirmPassword: event.target.value }))} />
         </>}
       </div>
+      {!editing && <section className={styles.profileDetails}>
+        <h3>{staffKind === "DOCTOR" ? "Doctor Profile Details" : `${staffKinds.find((kind) => kind.id === staffKind)?.label ?? "Staff"} Profile Details`}</h3>
+        <div className={styles.profileGrid}>
+          <Input label="Qualification" maxLength={200} required value={form.qualification} onChange={(event) => onChange((current) => ({ ...current, qualification: event.target.value }))} />
+          {staffKind === "DOCTOR" && <>
+            <Input label="Experience (years)" type="number" min={0} max={80} value={form.experienceYears ?? ""} onChange={(event) => onChange((current) => ({ ...current, experienceYears: event.target.value }))} />
+            <Input label="Working Schedule" placeholder="e.g. Mon-Fri, 9AM-5PM" maxLength={160} value={form.workingSchedule ?? ""} onChange={(event) => onChange((current) => ({ ...current, workingSchedule: event.target.value }))} />
+          </>}
+        </div>
+      </section>}
+      {editing && (form.role === "DOCTOR" || editing.role === "DOCTOR" || editing.experienceYears !== null || Boolean(editing.workingSchedule)) && <section className={styles.profileDetails}>
+        <h3>Doctor Profile Details</h3>
+        <div className={styles.profileGrid}>
+          <Input label="Experience (years)" type="number" min={0} max={80} value={form.experienceYears ?? ""} onChange={(event) => onChange((current) => ({ ...current, experienceYears: event.target.value }))} />
+          <Input label="Working Schedule" placeholder="e.g. Mon-Fri, 9AM-5PM" maxLength={160} value={form.workingSchedule ?? ""} onChange={(event) => onChange((current) => ({ ...current, workingSchedule: event.target.value }))} />
+        </div>
+      </section>}
       <p className={styles.loginHint}>Email is the login ID. Passwords are securely hashed and cannot be viewed after creation.</p>
-    </form>
-  </Drawer>;
+    </form>;
+  const footer = <div className={styles.drawerFooter}><Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button><Button type="submit" form="staff-form" loading={saving}>{editing ? "Save changes" : "Create login"}</Button></div>;
+  return editing
+    ? <Drawer open={open} onClose={onClose} title="Edit staff member" subtitle="Update account and staff information." placement="right" size="xl" footer={footer}>{contents}</Drawer>
+    : <Modal open={open} onClose={onClose} title="Create Staff Login" subtitle="Create an account that can sign in with the existing hospital login." size="lg" className={styles.createModal} footer={footer}>{contents}</Modal>;
 }

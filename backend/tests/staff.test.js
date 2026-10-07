@@ -25,6 +25,35 @@ test("staff validation supports every account role and optional profile fields",
   assert.equal(validateStaffInput({ ...validStaff, email: "", password: undefined, confirmPassword: undefined }), null);
 });
 
+test("staff profiles validate and expose doctor experience and working schedule", () => {
+  assert.equal(validateStaffInput({
+    ...validStaff,
+    role: "DOCTOR",
+    experienceYears: "12",
+    workingSchedule: "Mon-Fri, 9AM-5PM",
+  }, { creating: true }), null);
+  assert.match(validateStaffInput({ ...validStaff, experienceYears: "12.5" }, { creating: true }), /whole number/);
+  assert.match(validateStaffInput({ ...validStaff, experienceYears: "81" }, { creating: true }), /between 0 and 80/);
+  assert.match(validateStaffInput({ ...validStaff, workingSchedule: "x".repeat(161) }, { creating: true }), /160 characters or fewer/);
+
+  const publicRecord = publicStaff({
+    profile_id: "a1b2c3d4-1234-1234-1234-123456789012",
+    user_id: "b1b2c3d4-1234-1234-1234-123456789012",
+    staff_id: "DOC-001",
+    full_name: "Example Doctor",
+    email: "doctor@example.test",
+    role: "DOCTOR",
+    status: "ACTIVE",
+    account_active: true,
+    experience_years: 12,
+    working_schedule: "Mon-Fri, 9AM-5PM",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(publicRecord.experienceYears, 12);
+  assert.equal(publicRecord.workingSchedule, "Mon-Fri, 9AM-5PM");
+});
+
 test("staff validation rejects malformed values and unknown roles", () => {
   assert.match(validateStaffInput({ ...validStaff, role: "LAB_TECHNICIAN" }, { creating: true }), /Role must be/);
   assert.match(validateStaffInput({ ...validStaff, phone: "bad phone!" }, { creating: true }), /valid phone/);

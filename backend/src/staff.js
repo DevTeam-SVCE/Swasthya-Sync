@@ -43,6 +43,11 @@ function validateStaffInput(input, { creating = false, loginOnly = false } = {})
   if (input.designation && cleanText(input.designation).length > 160) return "Designation must be 160 characters or fewer.";
   if (input.department && cleanText(input.department).length > 120) return "Department must be 120 characters or fewer.";
   if (input.qualification && cleanText(input.qualification).length > 200) return "Qualification must be 200 characters or fewer.";
+  if (input.workingSchedule && cleanText(input.workingSchedule).length > 160) return "Working schedule must be 160 characters or fewer.";
+  if (input.experienceYears !== undefined && input.experienceYears !== null && input.experienceYears !== "") {
+    const experienceYears = Number(input.experienceYears);
+    if (!Number.isInteger(experienceYears) || experienceYears < 0 || experienceYears > 80) return "Experience must be a whole number between 0 and 80.";
+  }
   if (input.seniority && !senioritySet.has(cleanText(input.seniority).toLowerCase())) return "Select a supported seniority level.";
   if (input.dateOfJoining && !validDate(input.dateOfJoining)) return "Date of joining must be a valid date in YYYY-MM-DD format.";
   if (creating) {
@@ -68,6 +73,8 @@ function publicStaff(row) {
     seniority: row.seniority,
     qualification: row.qualification,
     dateOfJoining: row.date_of_joining,
+    experienceYears: row.experience_years,
+    workingSchedule: row.working_schedule,
     status: row.user_id ? (row.account_active ? "ACTIVE" : "SUSPENDED") : row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -76,7 +83,8 @@ function publicStaff(row) {
 
 const staffSelect = `SELECT p.id AS profile_id, p.user_id, p.staff_id, p.full_name, p.role,
   p.phone, p.designation, p.department, p.seniority, p.qualification,
-  p.date_of_joining::text AS date_of_joining, p.status, p.created_at, p.updated_at,
+  p.date_of_joining::text AS date_of_joining, p.experience_years, p.working_schedule,
+  p.status, p.created_at, p.updated_at,
   u.email, u.active AS account_active
   FROM staff_profiles p LEFT JOIN users u ON u.id = p.user_id`;
 
@@ -199,9 +207,9 @@ router.post("/", requireAuth, requirePermission("staff_management", "create"), a
       [req.user.hospital_id, cleanText(input.fullName), cleanText(input.email).toLowerCase(), passwordHash, cleanText(input.role).toUpperCase()]
     );
     await client.query(
-      `INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, phone, designation, department, seniority, qualification, date_of_joining, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACTIVE')`,
-      [user.rows[0].id, req.user.hospital_id, cleanText(input.fullName), cleanText(input.role).toUpperCase(), cleanText(input.staffId) || null, cleanText(input.phone) || null, cleanText(input.designation) || null, cleanText(input.department) || null, cleanText(input.seniority) || null, cleanText(input.qualification) || null, cleanText(input.dateOfJoining) || null]
+      `INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, phone, designation, department, seniority, qualification, date_of_joining, experience_years, working_schedule, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'ACTIVE')`,
+      [user.rows[0].id, req.user.hospital_id, cleanText(input.fullName), cleanText(input.role).toUpperCase(), cleanText(input.staffId) || null, cleanText(input.phone) || null, cleanText(input.designation) || null, cleanText(input.department) || null, cleanText(input.seniority) || null, cleanText(input.qualification) || null, cleanText(input.dateOfJoining) || null, input.experienceYears === "" || input.experienceYears === null || input.experienceYears === undefined ? null : Number(input.experienceYears), cleanText(input.workingSchedule) || null]
     );
     const result = await client.query(`${staffSelect} WHERE p.user_id = $1 AND p.hospital_id = $2`, [user.rows[0].id, req.user.hospital_id]);
     await client.query("COMMIT");
@@ -298,8 +306,9 @@ router.put("/:id", requireAuth, requirePermission("staff_management", "edit"), a
     await client.query(
       `UPDATE staff_profiles SET full_name = $1, role = $2, staff_id = $3, phone = $4,
         designation = $5, department = $6, seniority = $7, qualification = $8,
-        date_of_joining = $9, updated_at = NOW() WHERE id = $10 AND hospital_id = $11`,
-      [cleanText(input.fullName), nextRole, cleanText(input.staffId) || null, cleanText(input.phone) || null, cleanText(input.designation) || null, cleanText(input.department) || null, cleanText(input.seniority) || null, cleanText(input.qualification) || null, cleanText(input.dateOfJoining) || null, req.params.id, req.user.hospital_id]
+        date_of_joining = $9, experience_years = $10, working_schedule = $11,
+        updated_at = NOW() WHERE id = $12 AND hospital_id = $13`,
+      [cleanText(input.fullName), nextRole, cleanText(input.staffId) || null, cleanText(input.phone) || null, cleanText(input.designation) || null, cleanText(input.department) || null, cleanText(input.seniority) || null, cleanText(input.qualification) || null, cleanText(input.dateOfJoining) || null, input.experienceYears === "" || input.experienceYears === null || input.experienceYears === undefined ? null : Number(input.experienceYears), cleanText(input.workingSchedule) || null, req.params.id, req.user.hospital_id]
     );
     const result = await client.query(`${staffSelect} WHERE p.id = $1 AND p.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     await client.query("COMMIT");

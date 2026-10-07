@@ -55,10 +55,15 @@ CREATE TABLE IF NOT EXISTS staff_profiles (
   seniority TEXT,
   qualification TEXT,
   date_of_joining DATE,
+  experience_years INTEGER CHECK (experience_years IS NULL OR experience_years BETWEEN 0 AND 80),
+  working_schedule TEXT,
   status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS experience_years INTEGER;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS working_schedule TEXT;
 
 ALTER TABLE staff_profiles DROP CONSTRAINT IF EXISTS staff_profiles_role_check;
 ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_role_check
