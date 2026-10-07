@@ -27,6 +27,7 @@ const MODULE_ROLES = {
 
 const API_MODULES = [
   ["/api/staff", "staff_management"],
+  ["/api/settings", "settings"],
   ["/api/patient-forms", "patient_forms"],
   ["/api/form-templates", "patient_forms"],
   ["/api/appointments", "appointments"],
@@ -56,6 +57,7 @@ function canAccess(role, module, action = "view") {
   if (action === "delete") return normalizedRole === "ADMIN";
   if (normalizedRole === "ADMIN") return true;
   if (!normalizedRole || !MODULE_ROLES[module]?.includes(normalizedRole)) return false;
+  if (module === "settings" && action !== "view") return false;
   if (module === "patients" && action === "create" && normalizedRole === "DOCTOR") return false;
   return true;
 }

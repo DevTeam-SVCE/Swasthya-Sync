@@ -7,6 +7,23 @@ CREATE TABLE IF NOT EXISTS hospitals (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS hospital_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  hospital_id UUID NOT NULL UNIQUE REFERENCES hospitals(id) ON DELETE CASCADE,
+  hospital_name TEXT NOT NULL,
+  tagline TEXT,
+  address TEXT,
+  phone TEXT,
+  email TEXT,
+  primary_logo_url TEXT,
+  accreditation_logo_url TEXT,
+  branding_mode TEXT NOT NULL DEFAULT 'text_logo' CHECK (branding_mode IN ('text_logo', 'image')),
+  header_image_url TEXT,
+  footer_image_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   hospital_id UUID NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
