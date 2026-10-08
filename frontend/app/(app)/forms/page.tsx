@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Building2, FileText, ListChecks, Plus, Search, UserPlus, X } from "lucide-react";
+import { Building2, ChevronDown, FileText, ListChecks, PanelLeftClose, PanelLeftOpen, Plus, Search, UserPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -69,6 +69,8 @@ export default function FormsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [switchingForm, setSwitchingForm] = useState(false);
+  const [editorSidebarCollapsed, setEditorSidebarCollapsed] = useState(false);
+  const [collapsedEditorCategories, setCollapsedEditorCategories] = useState<Set<string>>(() => new Set());
   const [autoSaveStatus, setAutoSaveStatus] = useState("Ready");
   const [error, setError] = useState("");
   const [checklist, setChecklist] = useState<FormTemplate[]>([]);
@@ -250,6 +252,15 @@ useEffect(() => {
     },
     [templates, selectedTemplate]
   );
+  const editorTemplateGroups = useMemo(() => {
+    const groups = new Map<string, FormTemplate[]>();
+    for (const template of editorTemplates) {
+      const group = groups.get(template.category) ?? [];
+      group.push(template);
+      groups.set(template.category, group);
+    }
+    return Array.from(groups, ([name, categoryTemplates]) => ({ name, templates: categoryTemplates }));
+  }, [editorTemplates]);
   const editorTemplateIndex = editorTemplates.findIndex((item) => item.id === selectedTemplate?.id);
   const checkedIds = useMemo(() => new Set(checklist.map((item) => item.id)), [checklist]);
   const shownCheckedCount = templates.filter((item) => checkedIds.has(item.id)).length;
@@ -435,7 +446,7 @@ useEffect(() => {
         <Badge variant="primary" size="sm" dot>{templates.length} real templates</Badge>
       </div>
 
-      <div className={[styles.layout, returnPatientId ? styles.focusedLayout : ""].filter(Boolean).join(" ")}>
+      <div className={[styles.layout, returnPatientId ? styles.patientEditorLayout : "", editorSidebarCollapsed && returnPatientId ? styles.patientEditorLayoutCollapsed : ""].filter(Boolean).join(" ")}>
         {!returnPatientId && <Card className={styles.panel} noPadding>
           <div className={styles.panelHeader}><div><h2 className={styles.sectionTitle}>Form library</h2><p className={styles.sectionSubtitle}>Categories and consent subcategories are preserved.</p></div></div>
           <div className={styles.controls}>
@@ -455,17 +466,63 @@ useEffect(() => {
           <div className={styles.list}>{loading ? <div className={styles.empty}>Loading real templates…</div> : templates.length === 0 ? <div className={styles.empty}>No matching templates.</div> : templates.map((template) => <div key={template.id} className={[styles.templateRow, checkedIds.has(template.id) ? styles.templateRowChecked : ""].filter(Boolean).join(" ")}><label className={styles.checkCell}><input type="checkbox" checked={checkedIds.has(template.id)} onChange={() => toggleChecklist(template)} aria-label={`Add ${template.name} to checklist`} /></label><button type="button" className={[styles.template, selectedTemplate?.id === template.id ? styles.templateActive : ""].filter(Boolean).join(" ")} onClick={() => selectTemplate(template)}><div className={styles.templateName}>{template.name}</div><div className={styles.templateMeta}>{template.category}{template.subcategory ? ` · ${template.subcategory}` : ""}</div></button></div>)}</div>
         </Card>}
 
+        {returnPatientId && <Card className={[styles.editorSidebar, editorSidebarCollapsed ? styles.editorSidebarCollapsed : ""].filter(Boolean).join(" ")} noPadding>
+          <div className={styles.editorSidebarHeader}>
+            {!editorSidebarCollapsed && <div><h2 className={styles.sectionTitle}>Patient forms</h2><p className={styles.sectionSubtitle}>Browse by category</p></div>}
+            <button
+              type="button"
+              className={styles.editorSidebarToggle}
+              onClick={() => setEditorSidebarCollapsed((collapsed) => !collapsed)}
+              aria-label={editorSidebarCollapsed ? "Expand form navigation" : "Collapse form navigation"}
+              title={editorSidebarCollapsed ? "Expand form navigation" : "Collapse form navigation"}
+            >
+              {editorSidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </button>
+          </div>
+          {!editorSidebarCollapsed && <nav className={styles.editorSidebarNav} aria-label="Patient forms by category">
+            {editorTemplateGroups.map(({ name, templates: categoryTemplates }) => {
+              const isExpanded = !collapsedEditorCategories.has(name);
+              return <section className={styles.editorCategory} key={name}>
+                <button
+                  type="button"
+                  className={styles.editorCategoryToggle}
+                  onClick={() => setCollapsedEditorCategories((collapsed) => {
+                    const next = new Set(collapsed);
+                    if (next.has(name)) next.delete(name);
+                    else next.add(name);
+                    return next;
+                  })}
+                  aria-expanded={isExpanded}
+                >
+                  <span>{name}</span><span className={styles.editorCategoryCount}>{categoryTemplates.length}</span>
+                  <ChevronDown className={isExpanded ? "" : styles.editorCategoryChevronCollapsed} size={15} />
+                </button>
+                {isExpanded && <div className={styles.editorCategoryForms}>
+                  {categoryTemplates.map((template) => {
+                    const isActive = template.id === selectedTemplate?.id;
+                    return <button
+                      type="button"
+                      key={template.id}
+                      className={[styles.editorFormLink, isActive ? styles.editorFormLinkActive : ""].filter(Boolean).join(" ")}
+                      onClick={() => void navigateEditorForm(template)}
+                      disabled={switchingForm || saving}
+                      aria-current={isActive ? "page" : undefined}
+                      title={template.name}
+                    >
+                      <FileText size={14} />
+                      <span>{template.name}</span>
+                    </button>;
+                  })}
+                </div>}
+              </section>;
+            })}
+            {editorTemplateGroups.length === 0 && <p className={styles.editorSidebarEmpty}>No forms available.</p>}
+          </nav>}
+        </Card>}
+
         <Card className={styles.panel} noPadding>
           {!selectedTemplate ? <div className={styles.empty}><div><FileText size={32} /><p>Select a template to view the actual PDF.</p></div></div> : <div className={styles.viewer}>
             <div className={styles.viewerHeader}><div><h2 className={styles.sectionTitle}>{selectedTemplate.name}</h2><p className={styles.sectionSubtitle}>{selectedTemplate.category}{selectedTemplate.subcategory ? ` · ${selectedTemplate.subcategory}` : ""}</p>{selectedPatient && <p className={styles.muted}>Patient: {selectedPatient.fullName} · {autoSaveStatus}</p>}</div><div className={styles.viewerActions}><a href={pdfUrl || "#"} target="_blank" rel="noreferrer"><Button type="button" variant="secondary">Open PDF</Button></a>{!openedFormId && <Button type="button" leftIcon={<UserPlus size={15} />} onClick={() => document.getElementById("use-for-patient")?.scrollIntoView({ behavior: "smooth" })}>Use for patient</Button>}</div></div>
-            {returnPatientId && editorTemplates.length > 1 && <nav className={styles.formSwipeNav} aria-label="Patient form navigation">
-              <Button type="button" variant="secondary" size="sm" disabled={editorTemplateIndex <= 0 || switchingForm || saving} onClick={() => void moveEditorForm(-1)}>Previous form</Button>
-              <div className={styles.formSwipeTabs} role="tablist" aria-label="Forms in this category">
-                {editorTemplates.map((template) => <button key={template.id} type="button" role="tab" aria-selected={template.id === selectedTemplate.id} className={[styles.formSwipeTab, template.id === selectedTemplate.id ? styles.formSwipeTabActive : ""].filter(Boolean).join(" ")} onClick={() => void navigateEditorForm(template)} disabled={switchingForm || saving} title={template.name}><span>{template.name}</span><small>{template.subcategory || template.category}</small></button>)}
-              </div>
-              <Button type="button" variant="secondary" size="sm" disabled={editorTemplateIndex < 0 || editorTemplateIndex >= editorTemplates.length - 1 || switchingForm || saving} onClick={() => void moveEditorForm(1)}>Next form</Button>
-              <span className={styles.formSwipeHint}>Swipe left or right in Hand mode to switch forms. Changes save before switching.</span>
-            </nav>}
 {pdfUrl ? (
   <PdfStage
     src={pdfUrl}
