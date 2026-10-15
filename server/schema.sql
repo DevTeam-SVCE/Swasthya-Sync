@@ -17,7 +17,7 @@ DROP TABLE IF EXISTS billing CASCADE;
 CREATE TABLE doctors (
   id            VARCHAR(20) PRIMARY KEY,
   name          VARCHAR(100) NOT NULL,
-  department    VARCHAR(100) NOT NULL,
+  department    VARCHAR(500) NOT NULL, -- one or more, comma-separated
   qualification VARCHAR(200),
   experience    INTEGER DEFAULT 0,
   rating        NUMERIC(3,1) DEFAULT 5.0,
@@ -25,6 +25,7 @@ CREATE TABLE doctors (
   schedule      VARCHAR(100),
   phone         VARCHAR(20),
   email         VARCHAR(100),
+  doctor_type   VARCHAR(20) DEFAULT 'in-house', -- in-house | visiting
   patient_count INTEGER DEFAULT 0,
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );

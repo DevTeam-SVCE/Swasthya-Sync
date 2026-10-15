@@ -34,6 +34,15 @@ const DISPOSITION = {
 
 const MLC_TYPES = ['None', 'Road Accident (RTA)', 'Assault', 'Poisoning', 'Burns', 'Sexual Assault', 'Suicide Attempt', 'Industrial Accident', 'Other MLC']
 
+// Flatten a stored ER visit into the shape the cards use
+const toEntry = v => ({
+  ...v,
+  ...(v.vitals || {}),
+  age: v.patient_age, gender: v.patient_gender,
+  er_number: `ER${String(v.id).padStart(5, '0')}`,
+  registered_at: v.created_at,
+})
+
 function elapsed(ts) {
   if (!ts) return '—'
   const m = Math.floor((Date.now() - new Date(ts)) / 60000)
@@ -71,7 +80,15 @@ function EmergencyRegisterModal({ onClose, onSave }) {
         guardian_phone: form.guardian_phone,
       }
       const patient = await api.createPatient(payload)
-      onSave({ ...form, id: Date.now(), patient_id: patient.id, registered_at: new Date(), er_number: `ER${String(Date.now()).slice(-5)}` })
+      const visit = await api.createERVisit({
+        patient_id: patient.id,
+        triage_level: form.triage_level, case_type: form.case_type, chief_complaint: form.chief_complaint,
+        brought_by: form.brought_by, mlc_type: form.mlc_type, police_info: form.police_info,
+        guardian_phone: form.guardian_phone, disposition: form.disposition,
+        doctor_assigned: form.doctor_assigned, ambulance_no: form.ambulance_no,
+        vitals: { bp: form.bp, pulse: form.pulse, spo2: form.spo2, temp: form.temp, rr: form.rr, gcs: form.gcs },
+      })
+      onSave(toEntry({ ...visit, patient_name: patient.name, patient_age: patient.age, patient_gender: patient.gender }))
       onClose()
     } catch (e) { alert('Registration failed: ' + e.message) } finally { setSaving(false) }
   }
@@ -204,7 +221,7 @@ function EmergencyRegisterModal({ onClose, onSave }) {
 }
 
 // ─── Emergency Patient Card ───────────────────────────────────────────────────
-function ERCard({ entry, onDispose }) {
+function ERCard({ entry, onDispose, onTriage }) {
   const triage = TRIAGE_LEVELS[entry.triage_level] || TRIAGE_LEVELS['Green - Standard']
   const disp = DISPOSITION[entry.disposition] || DISPOSITION['Under Triage']
 
@@ -254,14 +271,25 @@ function ERCard({ entry, onDispose }) {
         </div>
       )}
 
-      {/* Disposition update */}
-      <select
-        className="form-input form-select"
-        style={{ fontSize: '0.78rem', padding: '0.375rem 0.75rem' }}
-        value={entry.disposition}
-        onChange={e => onDispose(entry.id, e.target.value)}>
-        {Object.keys(DISPOSITION).map(d => <option key={d}>{d}</option>)}
-      </select>
+      {/* Re-triage and disposition — both saved */}
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <select
+          className="form-input form-select"
+          style={{ fontSize: '0.78rem', padding: '0.375rem 0.75rem', flex: 1 }}
+          value={entry.triage_level}
+          title="Re-triage"
+          onChange={e => onTriage(entry.id, e.target.value)}>
+          {Object.entries(TRIAGE_LEVELS).map(([k, v]) => <option key={k} value={k}>{v.roman} — {v.label}</option>)}
+        </select>
+        <select
+          className="form-input form-select"
+          style={{ fontSize: '0.78rem', padding: '0.375rem 0.75rem', flex: 1 }}
+          value={entry.disposition}
+          title="Disposition"
+          onChange={e => onDispose(entry.id, e.target.value)}>
+          {Object.keys(DISPOSITION).map(d => <option key={d}>{d}</option>)}
+        </select>
+      </div>
     </div>
   )
 }
@@ -271,24 +299,40 @@ export default function Emergency() {
   const [erPatients, setErPatients] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [triageFilter, setTriageFilter] = useState('All')
+  const [loading, setLoading] = useState(true)
 
-  const addPatient = (entry) => setErPatients(prev => {
+  const byTriage = list => {
     const order = Object.keys(TRIAGE_LEVELS)
-    return [entry, ...prev].sort((a, b) => order.indexOf(a.triage_level) - order.indexOf(b.triage_level))
-  })
+    return [...list].sort((a, b) => order.indexOf(a.triage_level) - order.indexOf(b.triage_level))
+  }
 
-  const updateDisposition = (id, disposition) =>
-    setErPatients(prev => prev.map(p => p.id === id ? { ...p, disposition } : p))
+  useEffect(() => {
+    api.getERVisits()
+      .then(rows => setErPatients(byTriage(rows.map(toEntry))))
+      .catch(e => alert('Could not load ER board: ' + e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const addPatient = (entry) => setErPatients(prev => byTriage([entry, ...prev]))
+
+  const saveVisit = async (id, patch) => {
+    const before = erPatients
+    setErPatients(prev => byTriage(prev.map(p => p.id === id ? { ...p, ...patch } : p)))
+    try { await api.updateERVisit(id, patch) }
+    catch (e) { setErPatients(before); alert('Could not save: ' + e.message) }
+  }
+  const updateDisposition = (id, disposition) => saveVisit(id, { disposition })
+  const updateTriage = (id, triage_level) => saveVisit(id, { triage_level })
 
   const active = erPatients.filter(p => !['Discharged', 'Deceased', 'Transferred'].includes(p.disposition))
   const filtered = triageFilter === 'All' ? active : active.filter(p => p.triage_level === triageFilter)
 
   const counts = {
-    red: erPatients.filter(p => p.triage_level === 'Red - Immediate').length,
-    orange: erPatients.filter(p => p.triage_level === 'Orange - Very Urgent').length,
-    yellow: erPatients.filter(p => p.triage_level === 'Yellow - Urgent').length,
-    green: erPatients.filter(p => p.triage_level === 'Green - Standard').length,
-    mlc: erPatients.filter(p => p.mlc_type && p.mlc_type !== 'None').length,
+    red: active.filter(p => p.triage_level === 'Red - Immediate').length,
+    orange: active.filter(p => p.triage_level === 'Orange - Very Urgent').length,
+    yellow: active.filter(p => p.triage_level === 'Yellow - Urgent').length,
+    green: active.filter(p => p.triage_level === 'Green - Standard').length,
+    mlc: active.filter(p => p.mlc_type && p.mlc_type !== 'None').length,
   }
 
   return (
@@ -335,7 +379,9 @@ export default function Emergency() {
       </div>
 
       {/* ER Patient Grid */}
-      {active.length === 0 ? (
+      {loading ? (
+        <div className="card" style={{ padding: '4rem', textAlign: 'center' }}><Loader size={22} className="spin" style={{ display: 'inline-block' }} /></div>
+      ) : active.length === 0 ? (
         <div className="card" style={{ padding: '4rem', textAlign: 'center' }}>
           <AlertTriangle size={32} style={{ color: 'var(--gray-300)', marginBottom: '1rem', display: 'block', margin: '0 auto 1rem' }} />
           <div style={{ fontWeight: 700, color: 'var(--gray-600)', fontSize: '1.0625rem' }}>No active emergency cases</div>
@@ -343,7 +389,7 @@ export default function Emergency() {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
-          {filtered.map(entry => <ERCard key={entry.id} entry={entry} onDispose={updateDisposition} />)}
+          {filtered.map(entry => <ERCard key={entry.id} entry={entry} onDispose={updateDisposition} onTriage={updateTriage} />)}
         </div>
       )}
 

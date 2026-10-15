@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import {
   Pen, Eraser, Undo2, Trash2, Save, CheckCircle, Loader,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, X, Lock, Maximize2, Type, Download, ClipboardList, Hand
 } from 'lucide-react'
 import { api, SERVER_URL } from '../api'
 import { useAuth } from '../context/AuthContext'
+import RecordsPanel, { arrangeRecords } from './RecordsPanel'
+import { LAYOUT_VERSION, analyzeTemplate, buildPatientValues, planAutoFill, preloadImage, loadImage, getLoadedImage, logoFromBanner } from '../utils/formLayout'
 
 // ─── Ink Canvas ──────────────────────────────────────────────────────────────
 // InkCanvas — canErase controls whether eraser/undo/clear tools are available
@@ -38,38 +40,85 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
 
   // ── Pinch-to-zoom: non-passive touch listeners on the scroll container ────────
   // Must use addEventListener (not JSX) so we can call preventDefault() in touchmove.
+  // While the fingers move, the page is only CSS-transformed (cheap, smooth); the real
+  // re-render at the new scale happens once, when the pinch ends.
+  const pageWrapRef = useRef(null)
+  const pinchRef = useRef(null)          // active pinch: { startDist, ox, oy, startMid, ratio, mid }
+  const pendingAnchorRef = useRef(null)  // keep the pinched point under the fingers after re-render
+  const touchPointersRef = useRef(new Set())
+  const multiTouchRef = useRef(false)    // a 2nd finger touched — suppress drawing and swipes until all lift
+  const onPinchZoomRef = useRef(onPinchZoom)
+  onPinchZoomRef.current = onPinchZoom
+
+  // Drop any half-drawn stroke (e.g. the line the first finger started before the second landed)
+  const cancelStroke = useCallback(() => {
+    if (!isDrawing.current && !currentStrokeRef.current) return
+    isDrawing.current = false
+    currentStrokeRef.current = null
+    activePointerType.current = null
+    lastPoint.current = null
+    startPoint.current = null
+    setCurrentStroke(null)
+    setStrokes(prev => prev.slice()) // triggers a full redraw, wiping the partial line
+  }, [])
+
   useEffect(() => {
     const el = scrollContainerRef.current
-    if (!el || !onPinchZoom) return
+    if (!el || !onPinchZoomRef.current) return
 
-    let lastDist = null
-
-    const getPinchDist = (touches) => {
-      const dx = touches[0].clientX - touches[1].clientX
-      const dy = touches[0].clientY - touches[1].clientY
-      return Math.sqrt(dx * dx + dy * dy)
-    }
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const midpoint = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 })
 
     const onTouchStart = (e) => {
-      if (e.touches.length === 2) {
-        lastDist = getPinchDist(e.touches)
+      if (e.touches.length !== 2 || !pageWrapRef.current) return
+      multiTouchRef.current = true
+      cancelStroke()
+      const rect = pageWrapRef.current.getBoundingClientRect()
+      const mid = midpoint(e.touches)
+      pinchRef.current = {
+        startDist: dist(e.touches), ratio: 1, startMid: mid, mid,
+        ox: mid.x - rect.left, oy: mid.y - rect.top, w: rect.width, h: rect.height,
       }
+      pageWrapRef.current.style.transformOrigin = `${pinchRef.current.ox}px ${pinchRef.current.oy}px`
+      pageWrapRef.current.style.willChange = 'transform'
     }
 
     const onTouchMove = (e) => {
-      if (e.touches.length !== 2 || lastDist === null) return
+      const pinch = pinchRef.current
+      if (!pinch || e.touches.length !== 2) return
       // Stop browser from doing its own pinch-zoom / scroll during our gesture
       e.preventDefault()
-      const newDist = getPinchDist(e.touches)
-      if (newDist > 0 && lastDist > 0) {
-        const ratio = newDist / lastDist
-        onPinchZoom(ratio)
+      const d = dist(e.touches)
+      if (!(d > 0 && pinch.startDist > 0)) return
+      pinch.ratio = d / pinch.startDist
+      pinch.mid = midpoint(e.touches)
+      const tx = pinch.mid.x - pinch.startMid.x
+      const ty = pinch.mid.y - pinch.startMid.y
+      pageWrapRef.current.style.transform = `translate(${tx}px, ${ty}px) scale(${pinch.ratio})`
+    }
+
+    const endPinch = () => {
+      const pinch = pinchRef.current
+      pinchRef.current = null
+      if (pageWrapRef.current) {
+        pageWrapRef.current.style.transform = ''
+        pageWrapRef.current.style.willChange = ''
       }
-      lastDist = newDist
+      if (!pinch || Math.abs(pinch.ratio - 1) < 0.02) return
+      const cRect = el.getBoundingClientRect()
+      pendingAnchorRef.current = {
+        fx: pinch.ox / pinch.w, fy: pinch.oy / pinch.h,  // pinched point as a page fraction
+        cx: pinch.mid.x - cRect.left, cy: pinch.mid.y - cRect.top, // where the fingers ended
+      }
+      onPinchZoomRef.current?.(pinch.ratio)
     }
 
     const onTouchEnd = (e) => {
-      if (e.touches.length < 2) lastDist = null
+      if (e.touches.length < 2) endPinch()
+      if (e.touches.length === 0) {
+        multiTouchRef.current = false
+        touchPointersRef.current.clear()
+      }
     }
 
     el.addEventListener('touchstart',  onTouchStart, { passive: true })
@@ -83,7 +132,21 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
       el.removeEventListener('touchend',    onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [onPinchZoom])
+  }, [cancelStroke])
+
+  // After the page re-renders at the pinched scale, scroll so the point that was
+  // between the fingers is back under them.
+  useLayoutEffect(() => {
+    const anchor = pendingAnchorRef.current
+    const el = scrollContainerRef.current
+    const wrap = pageWrapRef.current
+    if (!anchor || !viewportSize || !el || !wrap) return
+    pendingAnchorRef.current = null
+    const cRect = el.getBoundingClientRect()
+    const wRect = wrap.getBoundingClientRect()
+    el.scrollLeft += (wRect.left + anchor.fx * wRect.width) - (cRect.left + anchor.cx)
+    el.scrollTop  += (wRect.top  + anchor.fy * wRect.height) - (cRect.top + anchor.cy)
+  }, [viewportSize])
 
   // When parent injects auto-fill annotations, MERGE them (don't replace user strokes).
   // Deliberately does NOT set hasChanges — auto-fill regenerates itself from patientData
@@ -198,7 +261,21 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
     if (!ctx || !protectedCanvasRef.current) return
     ctx.clearRect(0, 0, protectedCanvasRef.current.width, protectedCanvasRef.current.height)
     for (const stroke of strokeList) {
-      if (!stroke._autofilled || stroke.type !== 'text') continue
+      if (!stroke._autofilled) continue
+      if (stroke.type === 'image') {
+        const img = getLoadedImage(stroke.src)
+        const vw = viewportSize?.width || 1
+        const vh = viewportSize?.height || 1
+        if (img) ctx.drawImage(img, stroke.xFrac * vw, stroke.yFrac * vh, stroke.wFrac * vw, stroke.hFrac * vh)
+        continue
+      }
+      if (stroke.type === 'ellipse') { // circled choice, e.g. gender
+        const vw = viewportSize?.width || 1
+        const vh = viewportSize?.height || 1
+        drawEllipse(ctx, stroke, vw, vh, scale)
+        continue
+      }
+      if (stroke.type !== 'text') continue
       ctx.save()
       ctx.fillStyle = stroke.color || '#1a1a2e'
       const fontSize = (stroke.lineWidth || 2.7) * 6 * scale
@@ -257,6 +334,17 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
     const canvas = canvasRef.current
     if (!canvas) return
 
+    // Two fingers = pinch, not drawing. Pointer events fire before touchstart,
+    // so detect it here too and discard the stroke the first finger began.
+    if (e.pointerType === 'touch') {
+      touchPointersRef.current.add(e.pointerId)
+      if (touchPointersRef.current.size > 1) multiTouchRef.current = true
+    }
+    if (multiTouchRef.current) {
+      cancelStroke()
+      return
+    }
+
     // Palm rejection: if a pen stroke is active, ignore touch (palm) events
     if (activePointerType.current === 'pen' && e.pointerType === 'touch') {
       e.preventDefault()
@@ -303,7 +391,7 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
     }
     currentStrokeRef.current = newStroke  // Set ref synchronously — available immediately in move events
     setCurrentStroke(newStroke)
-  }, [tool, color, lineWidth, activeText, commitText, viewportSize])
+  }, [tool, color, lineWidth, activeText, commitText, viewportSize, cancelStroke])
 
   const onPointerMove = useCallback((e) => {
     // Use ref (not state) — state is async and may not have updated yet for fast stylus moves
@@ -352,6 +440,8 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
   }, [isDrawing, tool, color, lineWidth, viewportSize])
 
   const onPointerUp = useCallback((e) => {
+    if (e.pointerType === 'touch') touchPointersRef.current.delete(e.pointerId)
+    if (multiTouchRef.current) return // end of a pinch — not a swipe or a stroke
     // Palm rejection: only process pointer-up for the active drawing pointer type
     if (activePointerType.current && e.pointerType !== activePointerType.current) return
 
@@ -564,7 +654,7 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
         ref={scrollContainerRef}
         className="pdf-scroll-container"
         style={{ 
-          overflowX: 'hidden', 
+          overflowX: 'auto', 
           overflowY: 'auto', 
           background: '#1e293b', 
           display: 'flex', 
@@ -572,10 +662,10 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
           alignItems: 'flex-start',
           scrollbarWidth: 'auto',
           scrollbarColor: 'rgba(99, 102, 241, 0.75) rgba(30, 41, 59, 0.4)',
-          touchAction: 'pan-y',  // 1-finger → native vertical scroll; 2-finger pinch → our handler
+          touchAction: 'pan-x pan-y',  // 1-finger → native scroll (both axes when zoomed in); 2-finger pinch → our handler
         }}
       >
-        <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto' }}>
+        <div ref={pageWrapRef} style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto' }}>
           {/* PDF layer */}
           <canvas id={`pdf-canvas-${pdfPage}`} style={{ display: 'block' }} />
           {/* Ink layer — user strokes + eraser. Auto-filled text is NOT rendered here. */}
@@ -680,255 +770,25 @@ const InkCanvas = forwardRef(function InkCanvas({ formId, initialAnnotations, ex
   )
 }) // ─── end InkCanvas ───────────────────────────────────────────────────────────
 
-// ─── Smart PDF-aware Auto-fill ────────────────────────────────────────────────
-// Field label aliases: we search the PDF text layer for these strings and place
-// the patient value right after the found label, at the exact PDF coordinates.
-// This works on ANY uploaded template — no hardcoded positions needed.
-const FIELD_LABEL_MAP = [
-  // { key: data key, aliases: strings to search in PDF text layer, side: 'right'|'below' }
-  { key: 'patient_name',      aliases: ['patient name', 'name of patient', "patient's name", 'pt. name', 'pt name', 'name of the patient', 'patient'], side: 'right' },
-  { key: 'age',               aliases: ['age', 'years', 'y/o', 'yrs', 'age (yrs)', 'age in years'],                                                       side: 'right' },
-  { key: 'gender',            aliases: ['gender', 'sex', 'm/f', 'sex/gender'],                                                                            side: 'right' },
-  { key: 'age_gender',        aliases: ['age / gender', 'age/gender', 'age & gender', 'age-gender', 'age / sex', 'age/sex'],                              side: 'right' },
-  { key: 'reg_no',            aliases: ['reg no', 'reg. no', 'reg no.', 'uhid', 'mrd no', 'mr no', 'cr no', 'patient id', 'registration no', 'registration number', 'hosp. no', 'hosp no'], side: 'right' },
-  { key: 'ip_no',             aliases: ['ip no', 'ip number', 'ipd no', 'inpatient no', 'admission no', 'ipn', 'ip/op no'],                               side: 'right' },
-  { key: 'date_of_admission', aliases: ['date of admission', 'admission date', 'd.o.a', 'doa', 'admitted on', 'date of admit', 'date of admision'],       side: 'right' },
-  { key: 'phone',             aliases: ['phone number', 'phone no', 'mobile no', 'contact no', 'mobile', 'phone', 'contact', 'mob no', 'mob', 'tel'],    side: 'right' },
-  { key: 'consultant',        aliases: ['consultant', 'doctor', 'physician', 'attending doctor', 'consultant doctor', 'treating doctor', 'treating physician', 'surgeon', 'dr.'], side: 'right' },
-  { key: 'room_bed',          aliases: ['room / bed', 'room/bed', 'bed no', 'bed number', 'ward / bed', 'room', 'bed', 'ward', 'room no', 'bed no.', 'ward/bed'], side: 'right' },
-  { key: 'date_of_discharge', aliases: ['date of discharge', 'discharge date', 'd.o.d', 'dod', 'discharged on'],                                         side: 'right' },
-  { key: 'department',        aliases: ['department', 'dept', 'dept.', 'specialty', 'speciality', 'unit', 'ward name'],                                   side: 'right' },
-  { key: 'diagnosis',         aliases: ['diagnosis', 'final diagnosis', 'primary diagnosis', 'clinical diagnosis', 'provisional diagnosis', 'chief complaint', 'diag'], side: 'right' },
-  { key: 'blood_group',       aliases: ['blood group', 'blood type', 'b/g', 'rh', 'blood grp', 'blood gp'],                                              side: 'right' },
-  { key: 'address',           aliases: ['address', 'residence', 'residing at', 'addr'],                                                                   side: 'right' },
-  { key: 'today_date',        aliases: ['date'],                                                                                                           side: 'right' },
-]
-
-// Build the patient value map from patientData
-function buildPatientValues(patientData) {
-  if (!patientData) return {}
-  const p = patientData
-  const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
-  return {
-    patient_name:      p.name || '',
-    age:               p.age  || '',
-    gender:            p.gender || '',
-    age_gender:        [p.age ? `${p.age} Y` : '', p.gender].filter(Boolean).join(' / '),
-    reg_no:            p.id || p.uhid || '',
-    today_date:        new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-    date_of_admission: formatDate(p.admitted_at),
-    phone:            p.phone || '',
-    consultant:       p.doctor_name || '',
-    room_bed:         p.bed_id || p.room_bed || p.ward || '',
-    ip_no:            p.ip_no || p.id || '',
-    date_of_discharge: formatDate(p.discharged_at),
-    department:       p.department || '',
-    diagnosis:        p.diagnosis || p.notes || '',
-    blood_group:      p.blood_group || '',
-    address:          p.address || '',
-  }
+// Circled choice (auto-fill), in fractions of the page; lineWidth is in PDF points
+function drawEllipse(ctx, stroke, w, h, pxPerPt) {
+  ctx.save()
+  ctx.strokeStyle = stroke.color || '#1a1a2e'
+  ctx.lineWidth = (stroke.lineWidth || 1) * pxPerPt
+  ctx.beginPath()
+  ctx.ellipse(stroke.xFrac * w, stroke.yFrac * h, stroke.rxFrac * w, stroke.ryFrac * h, 0, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
 }
 
-/**
- * Extracts text items with positions from a PDF page using PDF.js text layer.
- * Returns array of { text, x, y, width, height } in PDF user-space units,
- * where y=0 is the BOTTOM of the page (PDF coordinate system).
- */
-async function extractTextItems(pdfPage) {
-  const textContent = await pdfPage.getTextContent()
-  const viewport = pdfPage.getViewport({ scale: 1 })
-  const pageHeight = viewport.height
-
-  return textContent.items.map(item => {
-    // item.transform = [scaleX, skewX, skewY, scaleY, translateX, translateY]
-    // translateX/Y are in PDF user space; Y is measured from BOTTOM in PDF, from TOP in canvas
-    const [, , , , tx, ty] = item.transform
-    const w = item.width
-    const h = item.height || Math.abs(item.transform[3]) // font size
-    return {
-      text:   item.str.trim(),
-      x:      tx,
-      y:      ty,           // bottom-left of text in PDF space (y=0 at bottom)
-      width:  w,
-      height: h,
-      // Pre-compute canvas-space fractions (y flipped: PDF bottom = canvas top)
-      xFrac: tx / viewport.width,
-      yFrac: (pageHeight - ty - h) / pageHeight,
-    }
-  }).filter(item => item.text.length > 0)
-}
-
-/**
- * Smart auto-fill: reads the PDF text layer to find exact label positions,
- * then places patient values right after each label. Works on any form template.
- */
-async function buildSmartAutoAnnotations(pdfPage, patientData, pageNum = 1) {
-  if (!patientData || !pdfPage) return []
-
-  const values = buildPatientValues(patientData)
-  const textItems = await extractTextItems(pdfPage)
-  const viewport = pdfPage.getViewport({ scale: 1 })
-  const pageW = viewport.width
-  const pageH = viewport.height
-
-  const annotations = []
-  const usedKeys = new Set()
-  const usedRowIndices = new Set() // prevent two fields from annotating the same PDF row
-
-  // Group text items by approximate Y row (within 4pt tolerance) to reconstruct
-  // multi-word labels that may be split across multiple text chunks
-  const rowTolerance = 4 // points
-  const rows = []
-  for (const item of textItems) {
-    const existingRow = rows.find(r => Math.abs(r.y - item.y) <= rowTolerance)
-    if (existingRow) {
-      existingRow.items.push(item)
-      // Extend row bounding box
-      existingRow.maxX = Math.max(existingRow.maxX, item.x + item.width)
-    } else {
-      rows.push({ y: item.y, items: [item], maxX: item.x + item.width })
-    }
-  }
-
-  // For each row, concatenate all text chunks into one searchable string
-  const rowTexts = rows.map(row => ({
-    ...row,
-    combined: row.items
-      .slice()
-      .sort((a, b) => a.x - b.x)
-      .map(i => i.text)
-      .join(' ')
-      .toLowerCase(),
-  }))
-
-  for (const fieldDef of FIELD_LABEL_MAP) {
-    if (usedKeys.has(fieldDef.key)) continue
-    const value = values[fieldDef.key]
-    if (!value) continue
-
-    // Try each alias, longest first for specificity
-    const aliases = [...fieldDef.aliases].sort((a, b) => b.length - a.length)
-    let matched = null
-
-    for (const alias of aliases) {
-      const aliasLower = alias.toLowerCase()
-      for (let rowIdx = 0; rowIdx < rowTexts.length; rowIdx++) {
-        if (usedRowIndices.has(rowIdx)) continue // skip rows already annotated
-        const row = rowTexts[rowIdx]
-        // Check if this row contains the alias
-        if (row.combined.includes(aliasLower)) {
-          // Find the rightmost item in this row as the label's right edge
-          const sortedItems = [...row.items].sort((a, b) => a.x - b.x)
-          // Find the specific item that contains or ends the matched alias text
-          const labelItem = sortedItems.find(i =>
-            i.text.toLowerCase().includes(aliasLower.split(' ').pop())
-          ) || sortedItems[sortedItems.length - 1]
-
-          matched = { row, labelItem, alias, rowIdx }
-          break
-        }
-      }
-      if (matched) break
-    }
-
-    if (!matched) continue
-    usedKeys.add(fieldDef.key)
-    usedRowIndices.add(matched.rowIdx) // mark this row as used
-
-    const { row, labelItem } = matched
-
-    // Place value to the RIGHT of the label, on the same baseline.
-    // row.y  = text BASELINE in PDF space (y=0 at bottom of page).
-    // We convert that baseline to a canvas-space fraction (y=0 at top of canvas)
-    // and store _baselineY=true so redrawAll uses textBaseline='alphabetic' —
-    // the same reference point as the PDF text, giving pixel-perfect alignment.
-    const valueX   = labelItem.x + labelItem.width + 8  // 8pt gap after label
-    const baseline = row.y                              // PDF baseline (from bottom)
-    const canvasY  = pageH - baseline                   // canvas Y of baseline (from top)
-    const xFrac    = valueX / pageW
-    const yFrac    = canvasY / pageH
-
-    // Skip if placement would go off the right edge of the page
-    if (xFrac >= 0.98) continue
-
-    // Calculate right boundary: distance from value X to end of row
-    // so the text doesn't overflow past the right side of that cell.
-    const nextItemX = row.items
-      .filter(i => i.x > labelItem.x + labelItem.width)
-      .sort((a, b) => a.x - b.x)[0]?.x
-    const cellRightX = nextItemX ?? pageW
-    const _maxXFrac = Math.min(0.99, cellRightX / pageW)
-
-    annotations.push({
-      type:        'text',
-      content:     value,
-      xFrac,
-      yFrac,
-      x: 0, y: 0,
-      color:       '#1a1a2e',
-      lineWidth:   2.5,
-      page:        pageNum,
-      _autofilled: true,
-      _baselineY:  true,
-      _label:      matched.alias,
-      _maxXFrac,
-    })
-  }
-
-  // ── Positional fallback ────────────────────────────────────────────────────
-  // If patient_name wasn't matched (form has a blank rectangle with no text labels),
-  // find the first clear vertical gap in the top 55% of the page and inject a
-  // formatted patient card directly into that blank space.
-  if (!usedKeys.has('patient_name') && values.patient_name) {
-    // Place a "patient sticker" in the top-right corner where forms usually have white space.
-    // The previous gap detection logic failed because logos/images don't have text layers.
-    const insertY = 0.024;
-    const startX = 0.515;
-
-    const lines = [
-      [
-        values.patient_name && `Name: ${values.patient_name}`,
-        values.age_gender   && `Age/Sex: ${values.age_gender}`,
-      ].filter(Boolean),
-      [
-        values.reg_no      && `UHID: ${values.reg_no}${values.room_bed ? ` / Bed: ${values.room_bed}` : ''}`,
-        values.today_date   && `Date: ${values.today_date}`,
-      ].filter(Boolean),
-      [
-        values.consultant  && `Dr: ${values.consultant}`,
-        values.department  && `Dept: ${values.department}${values.blood_group ? ` / B/G: ${values.blood_group}` : ''}`,
-      ].filter(Boolean),
-    ].filter(row => row.length > 0)
-
-    // Two-column layout starting at page midpoint.
-    // _maxXFrac gives each column a hard right boundary so text never overflows.
-    const colGap = 0.185
-    const adjStartX = 0.50
-    // Col 0 ends just before col 1 starts; col 1 ends at 98% of page width.
-    const colMaxXFrac = [adjStartX + colGap - 0.008, 0.98]
-    lines.forEach((row, lineIdx) => {
-      row.forEach((text, colIdx) => {
-        annotations.push({
-          type:        'text',
-          content:     text,
-          xFrac:       adjStartX + colIdx * colGap,
-          yFrac:       insertY + lineIdx * 0.033,
-          x: 0, y: 0,
-          color:       '#1e3a5f',
-          lineWidth:   1.5,
-          page:        pageNum,
-          _autofilled: true,
-          _baselineY:  false,
-          _label:      'fallback',
-          _maxXFrac:   colMaxXFrac[colIdx] ?? 0.98,
-          refScale:    1.0,
-        })
-      })
-    })
-  }
-
-  return annotations
-}
+// ─── Unsaved drafts across forms ─────────────────────────────────────────────
+// Parents remount FormViewer for every form (key={form.id}), so work that hasn't been
+// saved to the server is parked here while the user moves between forms, and only
+// saved (or discarded) when they leave the viewer.
+const formDrafts = new Map()      // formId -> { form, annotations }
+let switchingToFormId = null      // set just before switching forms, so the next mount keeps the drafts
+let reopenRecordsPanel = false     // after adding a copy from the Records panel, show the panel again on the new form
+let recordsSort = 'assigned'      // Records panel sort, kept while moving between forms
 
 // ─── Patient Info Sidebar ─────────────────────────────────────────────────────
 function PatientInfoSidebar({ patientData, onClose, onStampField }) {
@@ -955,41 +815,41 @@ function PatientInfoSidebar({ patientData, onClose, onStampField }) {
 
   return (
     <div style={{
-      width: 280, background: '#1e293b', borderLeft: '1px solid rgba(255,255,255,0.1)',
+      width: 310, background: '#1e293b', borderLeft: '1px solid rgba(255,255,255,0.1)',
       display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto',
     }}>
       {/* Header */}
       <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.8rem', letterSpacing: '0.04em' }}>📋 PATIENT DETAILS</div>
+        <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.04em' }}>📋 PATIENT DETAILS</div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: 0 }}>✕</button>
       </div>
       {/* Avatar + name */}
       <div style={{ padding: '1rem', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #0d9488)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#fff', fontSize: '1rem', flexShrink: 0 }}>
+        <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #0d9488)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#fff', fontSize: '1.1rem', flexShrink: 0 }}>
           {(p.name || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
         </div>
         <div>
-          <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>{p.name}</div>
-          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.72rem' }}>{p.id}</div>
+          <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.05rem' }}>{p.name}</div>
+          <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem' }}>{p.id}</div>
         </div>
       </div>
       {/* Fields */}
       <div style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
         {fields.map((f, i) => (
           <div key={i} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '0.6rem 0.75rem', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.35)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.2rem' }}>{f.label}</div>
+            <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.55)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{f.label}</div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-              <div style={{ fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>{f.value}</div>
+              <div style={{ fontSize: '0.95rem', color: '#fff', fontWeight: 600, wordBreak: 'break-word' }}>{f.value}</div>
               <div style={{ display: 'flex', gap: '0.25rem' }}>
                 <button
                   onClick={() => copyField(f.value, i)}
                   title="Copy to clipboard"
-                  style={{ background: copied === i ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 5, padding: '0.2rem 0.4rem', color: copied === i ? '#10b981' : 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+                  style={{ background: copied === i ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 5, padding: '0.2rem 0.4rem', color: copied === i ? '#10b981' : 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}
                 >{copied === i ? '✓ Copied' : '📋'}</button>
                 <button
                   onClick={() => onStampField(f.value)}
                   title="Click where you want to place this text on the PDF"
-                  style={{ background: 'rgba(99,102,241,0.2)', border: 'none', borderRadius: 5, padding: '0.2rem 0.4rem', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.65rem', fontWeight: 700 }}
+                  style={{ background: 'rgba(99,102,241,0.2)', border: 'none', borderRadius: 5, padding: '0.2rem 0.4rem', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
                 >📌</button>
               </div>
             </div>
@@ -997,7 +857,7 @@ function PatientInfoSidebar({ patientData, onClose, onStampField }) {
         ))}
       </div>
       <div style={{ padding: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', textAlign: 'center', lineHeight: 1.5 }}>
+        <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: 1.5 }}>
           📋 Copy • 📌 Click to place on PDF
         </div>
       </div>
@@ -1005,7 +865,7 @@ function PatientInfoSidebar({ patientData, onClose, onStampField }) {
   )
 }
 
-export default function FormViewer({ formInstance, allForms = [], patientData, onClose, onAnnotationsSaved, onSwitchForm }) {
+export default function FormViewer({ formInstance, allForms = [], patientData, onClose, onAnnotationsSaved, onSwitchForm, onAddForm }) {
   const [pdfDoc, setPdfDoc] = useState(null)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -1015,16 +875,27 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
   const [pdfError, setPdfError] = useState(null)
   const containerRef = useRef(null)
   const [annotations, setAnnotations] = useState([])
+  // A fresh open of the viewer (not a switch from another form) starts with no drafts.
+  // Lazy useState init so StrictMode's double render sees the same decision.
+  useState(() => {
+    if (switchingToFormId !== formInstance.id) formDrafts.clear()
+    switchingToFormId = null
+    return null
+  })
   const [viewportSize, setViewportSize] = useState(null)
   const [showInfoPanel, setShowInfoPanel] = useState(!!patientData && !allForms.length)
-  const [showFormsQueue, setShowFormsQueue] = useState(false) // hidden by default, PDF fills screen
+  const [showFormsQueue, setShowFormsQueue] = useState(() => reopenRecordsPanel) // Records panel — hidden by default, PDF fills screen
+  useEffect(() => { reopenRecordsPanel = false }, [])
   const [pendingStamp, setPendingStamp] = useState(null)
   const inkCanvasRef = useRef(null)
   const fullScreenRef = useRef(null)
   const scaledForDocRef = useRef(null) // tracks which pdfDoc was used to compute current scale
+  const needsFitRef = useRef(true)      // recompute fit-to-screen scale on next page-1 render
   const [transitioning, setTransitioning] = useState(false)
   const [slideDir, setSlideDir] = useState(null) // 'left' | 'right' | null
-  const swipeRef = useRef({ x: 0, y: 0, time: 0 })
+  const swipeRef = useRef({ x: 0, y: 0, time: 0, multi: false })
+  const activePointersRef = useRef(new Set())
+  const lastWheelRef = useRef(0)
   const [autoFilled, setAutoFilled] = useState(false)
   const autoFilledRef = useRef(false)
   const autoFilledPagesRef = useRef(new Set())
@@ -1043,15 +914,17 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
   // Resetting page/scale is enough to re-trigger the render effect.
   useEffect(() => {
     if (!formInstance) return
-    setAnnotations(Array.isArray(formInstance.annotations) ? formInstance.annotations : [])
+    const draft = formDrafts.get(formInstance.id)
+    setAnnotations(draft ? draft.annotations : Array.isArray(formInstance.annotations) ? formInstance.annotations : [])
     setPage(1)
     setViewportSize(null)
     setScale(1.0)
+    needsFitRef.current = true
     autoFilledRef.current = false
     autoFilledPagesRef.current = new Set()
     setAutoFilled(false)
     setPageDirty(false)
-    hasUnsavedRef.current = false
+    hasUnsavedRef.current = !!draft
   }, [formInstance.id])
 
   // Bubble a dirty CURRENT page up to the form-level "has unsaved work somewhere" flag.
@@ -1082,6 +955,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
     let loadedDoc = null     // track the document so we can destroy it if cancelled
     setLoadingPdf(true)
     setScale(1.0)            // force scale recomputation when a new PDF file loads
+    needsFitRef.current = true
     setPdfError(null)
     import('pdfjs-dist').then(async (pdfjsLib) => {
       if (cancelled) return
@@ -1132,7 +1006,8 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
         const scaleByHeight = availH / naturalViewport.height
         const computed = Math.max(0.4, Math.min(3, Math.min(scaleByWidth, scaleByHeight) * 0.97))
         // Recompute if: first load (scale===1.0) OR pdfDoc changed (new PDF with different dims)
-        if (scale === 1.0 || scaledForDocRef.current !== pdfDoc) {
+        if (needsFitRef.current || scaledForDocRef.current !== pdfDoc) {
+          needsFitRef.current = false
           scaledForDocRef.current = pdfDoc
           renderScale = computed
           setFitScale(computed)
@@ -1153,31 +1028,6 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
       activeRenderTask.promise.then(async () => {
         if (cancelled) return
         setViewportSize({ width: viewport.width, height: viewport.height })
-        // Smart auto-fill: run for EVERY page so patient details appear throughout the PDF.
-        // Skip pages that have already been filled, or that have real (user) annotations.
-        if (patientData && !autoFilledPagesRef.current.has(page)) {
-          // Check if this page already has real saved annotations
-          const hasRealAnnotationsOnPage = (current) =>
-            current.some(a => !a._autofilled && a.page === page)
-          try {
-            const autoAnns = await buildSmartAutoAnnotations(pdfPage, patientData, page)
-            if (!cancelled && autoAnns.length > 0) {
-              setAnnotations(prev => {
-                if (hasRealAnnotationsOnPage(prev)) return prev // don't clobber real data
-                autoFilledPagesRef.current.add(page)
-                autoFilledRef.current = true
-                setAutoFilled(true)
-                const clearPrev = prev.filter(a => !(a._autofilled && a.page === page))
-                return [...clearPrev, ...autoAnns]
-              })
-            } else {
-              // Even if no annotations were generated, mark page as processed
-              autoFilledPagesRef.current.add(page)
-            }
-          } catch (err) {
-            console.warn('[AutoFill] Smart auto-fill failed for page', page, err)
-          }
-        }
         }).catch((err) => {
           // RenderingCancelledException is expected on cleanup — ignore it silently.
           // Any other error should log for debugging.
@@ -1196,6 +1046,73 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
     }
   }, [pdfDoc, page, scale])
 
+  // ── Template layout (where blanks / empty areas are) ──────────────────────
+  // Scanned once per template and stored on the server; templates uploaded before the
+  // scanner existed (or scanned by an older version) are scanned here on first open.
+  const [layout, setLayout] = useState(null)
+  const [scanProgress, setScanProgress] = useState(null) // { page, pages } during a first-open scan
+  useEffect(() => {
+    if (!pdfDoc) return
+    let cancelled = false
+    const stored = formInstance.layout
+    if (stored?.version === LAYOUT_VERSION && stored.pages?.length === pdfDoc.numPages) {
+      setLayout(stored)
+      return
+    }
+    setLayout(null)
+    analyzeTemplate(pdfDoc, { onProgress: p => { if (!cancelled) setScanProgress(p) } }).then(result => {
+      if (cancelled) return
+      setScanProgress(null)
+      setLayout(result)
+      if (formInstance.template_id) {
+        api.saveFormTemplateLayout(formInstance.template_id, { layout: result, page_count: pdfDoc.numPages })
+          .catch(err => console.warn('[AutoFill] could not store template layout', err))
+      }
+    })
+    return () => { cancelled = true }
+  }, [pdfDoc, formInstance.template_id])
+
+  // ── Hospital logo (Settings → report logo) ─────────────────────────────────
+  // undefined = still loading, null = none. Auto-fill waits for this so the logo's
+  // shape is known before the page is planned.
+  const [logo, setLogo] = useState(undefined)
+  useEffect(() => {
+    let cancelled = false
+    api.getHospital()
+      .then(async h => {
+        const src = h?.report_logo ? `${SERVER_URL}${h.report_logo}` : h?.logo || null
+        if (src) {
+          const img = await preloadImage(src)
+          return { src, w: img.naturalWidth, h: img.naturalHeight }
+        }
+        // No logo uploaded — take the logo from the left of the report header banner
+        if (!h?.report_header_image) return null
+        const cut = logoFromBanner(await loadImage(`${SERVER_URL}${h.report_header_image}`))
+        if (!cut) return null
+        await preloadImage(cut.src)
+        return cut
+      })
+      .catch(() => null)
+      .then(l => { if (!cancelled) setLogo(l && l.w > 0 && l.h > 0 ? l : null) })
+    return () => { cancelled = true }
+  }, [])
+
+  // ── Auto-fill: patient details + logo for each page, once per page per session ──
+  // Only previously auto-filled entries are replaced — user strokes are kept,
+  // so stale details saved by older layouts get refreshed too.
+  useEffect(() => {
+    if (!patientData || !layout || logo === undefined || !viewportSize) return
+    if (autoFilledPagesRef.current.has(page)) return
+    const layoutPage = layout.pages[page - 1]
+    autoFilledPagesRef.current.add(page)
+    if (!layoutPage) return
+    const autoAnns = planAutoFill(layoutPage, page, buildPatientValues(patientData), logo)
+    if (!autoAnns.length) return
+    setAnnotations(prev => [...prev.filter(a => !(a._autofilled && a.page === page)), ...autoAnns])
+    autoFilledRef.current = true
+    setAutoFilled(true)
+  }, [patientData, layout, logo, viewportSize, page])
+
   // ── Save handler ───────────────────────────────────────────────────────────
   const handleSave = async (strokes, status) => {
     // Merge this page's new strokes with other pages' saved strokes
@@ -1212,13 +1129,21 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
 
     const saved = Array.isArray(updated.annotations) ? updated.annotations : merged
     setAnnotations(saved)
-    if (onAnnotationsSaved) onAnnotationsSaved(saved, updated.status || status)
+    formDrafts.delete(formInstance.id)
+    hasUnsavedRef.current = false
+    if (onAnnotationsSaved) onAnnotationsSaved(saved, updated.status || status, formInstance.id)
     return updated
   }
 
   // ── Navigation (Page & Form) ─────────────────────────────────────────────
   // Run the actual slide animation + action
+  // navLockRef is set synchronously: one swipe is seen by both InkCanvas and the container,
+  // and both fire in the same event — before the `transitioning` state update lands.
+  // Without the ref, the second call flips again and a page gets skipped.
+  const navLockRef = useRef(false)
   const executeNavigate = useCallback((dir, action) => {
+    if (navLockRef.current) return
+    navLockRef.current = true
     setSlideDir(dir)
     setTransitioning(true)
     setTimeout(() => {
@@ -1227,6 +1152,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
       setTimeout(() => {
         setSlideDir(null)
         setTransitioning(false)
+        navLockRef.current = false
       }, 280)
     }, 220)
   }, [])
@@ -1246,62 +1172,113 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
 
   // Page-to-page flip WITHIN the same form: never nag — just carry the work forward locally.
   const flipPage = useCallback((dir, action) => {
-    if (transitioning) return
+    if (transitioning || navLockRef.current) return
     commitCurrentPageLocally()
     executeNavigate(dir, action)
   }, [transitioning, commitCurrentPageLocally, executeNavigate])
 
-  // Changing FORM (or closing the viewer) is the actual point of no return for anything not
-  // yet saved to the server — that's where we ask.
-  const requestFormSwitch = useCallback((dir, action) => {
-    if (transitioning) return
+  // This form's full annotation set including the current page's unsaved strokes (no API call)
+  const snapshotCurrentForm = useCallback(() => {
+    const local = pageDirty ? inkCanvasRef.current?.getLocalAnnotations?.() : null
+    if (!local) return annotations
+    return [...annotations.filter(s => s.page !== page), ...local.map(s => ({ ...s, page }))]
+  }, [pageDirty, annotations, page])
+
+  const hasAnyUnsaved = useCallback(() =>
+    pageDirty || hasUnsavedRef.current || [...formDrafts.keys()].some(id => id !== formInstance.id)
+  , [pageDirty, formInstance.id])
+
+  // Switching FORM inside the viewer: park unsaved work in memory and move on without asking.
+  // Only leaving the viewer (requestClose) asks to save.
+  const requestFormSwitch = useCallback((dir, action, targetId) => {
+    if (transitioning || navLockRef.current) return
     if (pageDirty || hasUnsavedRef.current) {
-      setPendingNavDir(dir)
-      setPendingNavAction(() => action)
-      setShowSaveDialog(true)
-      return
+      formDrafts.set(formInstance.id, { form: formInstance, annotations: snapshotCurrentForm() })
     }
-    executeNavigate(dir, action)
-  }, [transitioning, pageDirty, executeNavigate])
+    executeNavigate(dir, () => {
+      switchingToFormId = targetId
+      action()
+    })
+  }, [transitioning, pageDirty, formInstance, snapshotCurrentForm, executeNavigate])
+
+  // From the Records panel: open another of the patient's forms, or add a new one and open it
+  const switchToForm = useCallback((f) => {
+    setShowFormsQueue(false)
+    requestFormSwitch('left', () => onSwitchForm(f), f.id)
+  }, [requestFormSwitch, onSwitchForm])
+
+  const addFormFromPanel = useCallback(async (template, { keepPanelOpen = false } = {}) => {
+    const created = await onAddForm(template) // parent creates it and adds it to allForms
+    reopenRecordsPanel = keepPanelOpen
+    switchToForm(created)
+  }, [onAddForm, switchToForm])
+
+  // Add Records with several forms ticked: create them in order, then open the first one.
+  // Returns the names that failed (the rest were added).
+  const addFormsFromPanel = useCallback(async (templates) => {
+    const created = [], failed = []
+    for (const t of templates) {
+      try { created.push(await onAddForm(t)) } catch (e) { failed.push(`${t.name}: ${e.message}`) }
+    }
+    if (created.length) {
+      reopenRecordsPanel = true
+      switchToForm(created[0])
+    }
+    return failed
+  }, [onAddForm, switchToForm])
 
   const requestClose = useCallback(() => {
-    if (pageDirty || hasUnsavedRef.current) {
+    if (hasAnyUnsaved()) {
       setPendingNavDir(null)
       setPendingNavAction(() => onClose)
       setShowSaveDialog(true)
       return
     }
     onClose()
-  }, [pageDirty, onClose])
+  }, [hasAnyUnsaved, onClose])
 
-  const goToNext = useCallback(() => {
-    if (page < totalPages) {
-      flipPage('left', () => setPage(p => p + 1))
-    } else if (allForms.length > 1 && onSwitchForm) {
-      const idx = allForms.findIndex(f => f.id === formInstance.id)
-      if (idx !== -1 && idx < allForms.length - 1) {
-        requestFormSwitch('left', () => onSwitchForm(allForms[idx + 1]))
-      }
+  // Closing/reloading the browser tab can't run our save dialog — at least warn.
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (!hasAnyUnsaved()) return
+      e.preventDefault()
+      e.returnValue = ''
     }
-  }, [page, totalPages, allForms, formInstance.id, onSwitchForm, flipPage, requestFormSwitch])
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasAnyUnsaved])
+
+  // Next / previous form follows the Records panel's order (record sets, then date added or name)
+  const [sort, setSort] = useState(() => recordsSort)
+  const changeSort = useCallback((key) => { recordsSort = key; setSort(key) }, [])
+  const navForms = useMemo(() => [...arrangeRecords(allForms, sort).groups.values()].flat(), [allForms, sort])
+  const formIdx = navForms.findIndex(f => f.id === formInstance.id)
+  const hasNextForm = !!onSwitchForm && formIdx !== -1 && formIdx < navForms.length - 1
+  const hasPrevForm = !!onSwitchForm && formIdx > 0
+  const canGoNext = page < totalPages || hasNextForm
+  const canGoPrev = page > 1 || hasPrevForm
+
+  // Past the last page → next form (page 1); before page 1 → previous form.
+  const goToNext = useCallback(() => {
+    if (page < totalPages) flipPage('left', () => setPage(p => Math.min(totalPages, p + 1)))
+    else if (hasNextForm) requestFormSwitch('left', () => onSwitchForm(navForms[formIdx + 1]), navForms[formIdx + 1].id)
+  }, [page, totalPages, hasNextForm, navForms, formIdx, onSwitchForm, flipPage, requestFormSwitch])
 
   const goToPrev = useCallback(() => {
-    if (page > 1) {
-      flipPage('right', () => setPage(p => p - 1))
-    } else if (allForms.length > 1 && onSwitchForm) {
-      const idx = allForms.findIndex(f => f.id === formInstance.id)
-      if (idx > 0) {
-        requestFormSwitch('right', () => onSwitchForm(allForms[idx - 1]))
-      }
-    }
-  }, [page, allForms, formInstance.id, onSwitchForm, flipPage, requestFormSwitch])
+    if (page > 1) flipPage('right', () => setPage(p => Math.max(1, p - 1)))
+    else if (hasPrevForm) requestFormSwitch('right', () => onSwitchForm(navForms[formIdx - 1]), navForms[formIdx - 1].id)
+  }, [page, hasPrevForm, navForms, formIdx, onSwitchForm, flipPage, requestFormSwitch])
 
   // ── Swipe Detection ────────────────────────────────────────────────────────
   const onPointerDown = (e) => {
     // Only track swipe for touch/pen that isn't a long press
-    swipeRef.current = { x: e.clientX, y: e.clientY, time: Date.now() }
+    activePointersRef.current.add(e.pointerId)
+    if (activePointersRef.current.size > 1) swipeRef.current.multi = true
+    else swipeRef.current = { x: e.clientX, y: e.clientY, time: Date.now(), multi: false }
   }
   const onPointerUp = (e) => {
+    activePointersRef.current.delete(e.pointerId)
+    if (swipeRef.current.multi) return // pinch gesture, not a swipe
     const dx = e.clientX - swipeRef.current.x
     const dy = e.clientY - swipeRef.current.y
     const dt = Date.now() - swipeRef.current.time
@@ -1353,7 +1330,15 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
           const refScale = stroke.refScale || (stroke.xFrac != null ? 1 : 1.2 /* fallback */)
           const scaleRatio = DOWNLOAD_SCALE / refScale
 
-          if (stroke.type === 'text') {
+          if (stroke.type === 'ellipse') {
+            drawEllipse(ctx, stroke, offCanvas.width, offCanvas.height, DOWNLOAD_SCALE)
+          } else if (stroke.type === 'image') {
+            try {
+              const img = await loadImage(stroke.src)
+              ctx.drawImage(img, stroke.xFrac * offCanvas.width, stroke.yFrac * offCanvas.height,
+                stroke.wFrac * offCanvas.width, stroke.hFrac * offCanvas.height)
+            } catch (err) { console.warn('[Download] logo skipped', err) }
+          } else if (stroke.type === 'text') {
             ctx.save()
             ctx.fillStyle = stroke.color || '#1a1a2e'
             // Scaled font size relative to high-res download
@@ -1455,33 +1440,56 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
     setPendingNavAction(null)
     setPendingNavDir(null)
   }
-  const handleDialogSkip = () => {
+  const finishPendingNav = () => {
     const action = pendingNavAction
     const dir    = pendingNavDir
     setShowSaveDialog(false)
     setPendingNavAction(null)
     setPendingNavDir(null)
-    hasUnsavedRef.current = false // discarding — we're leaving this form instance behind
     if (dir) executeNavigate(dir, action)
     else action?.() // closing the viewer entirely — no slide animation needed
   }
+  const handleDialogSkip = () => {
+    hasUnsavedRef.current = false // discarding — we're leaving this form instance behind
+    formDrafts.clear()
+    finishPendingNav()
+  }
   const handleDialogSave = async () => {
-    if (!inkCanvasRef.current?.save) return handleDialogSkip()
     setDialogSaving(true)
-    try {
-      await inkCanvasRef.current.save()
-    } catch (_) { /* save errors shown inside InkCanvas */ } finally {
-      setDialogSaving(false)
+    const failed = []
+    // Current form: through InkCanvas, so the open page's strokes and status are handled as usual
+    if ((pageDirty || hasUnsavedRef.current) && inkCanvasRef.current?.save) {
+      try { await inkCanvasRef.current.save() } catch (_) { /* InkCanvas reports its own errors */ }
+      // A successful save clears hasUnsavedRef (see handleSave); if it's still set, it failed
+      if (hasUnsavedRef.current) failed.push(formInstance.template_name)
+    }
+    // Other forms visited in this session with parked work
+    for (const [id, { form, annotations: anns }] of formDrafts) {
+      if (id === formInstance.id) continue
+      try {
+        const body = { annotations: anns, status: 'in-progress', filled_by: form.filled_by || '' }
+        const updated = form.type === 'discharge'
+          ? await api.saveDischargeSummaryAnnotations(id, body)
+          : await api.savePatientFormAnnotations(id, body)
+        formDrafts.delete(id)
+        onAnnotationsSaved?.(Array.isArray(updated.annotations) ? updated.annotations : anns, updated.status || 'in-progress', id)
+      } catch (_) { failed.push(form.template_name) }
+    }
+    setDialogSaving(false)
+    if (failed.length) {
+      alert(`Could not save: ${failed.join(', ')}. Please try again.`)
+      return // stay in the viewer so nothing is lost
     }
     hasUnsavedRef.current = false
-    const action = pendingNavAction
-    const dir    = pendingNavDir
-    setShowSaveDialog(false)
-    setPendingNavAction(null)
-    setPendingNavDir(null)
-    if (dir) executeNavigate(dir, action)
-    else action?.()
+    formDrafts.clear()
+    finishPendingNav()
   }
+
+  // Names of every form with unsaved work, for the exit dialog
+  const unsavedFormNames = [
+    ...(pageDirty || hasUnsavedRef.current ? [formInstance.template_name] : []),
+    ...[...formDrafts.entries()].filter(([id]) => id !== formInstance.id).map(([, d]) => d.form.template_name),
+  ]
 
   const pageAnnotations = annotations.filter(s => s.page === page)
 
@@ -1530,7 +1538,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
             {/* Title */}
             <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
               <div style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem', letterSpacing: '-0.01em' }}>
-                Save before continuing?
+                Save before leaving?
               </div>
             </div>
             {/* Subtitle */}
@@ -1538,15 +1546,17 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
               <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.84rem', lineHeight: 1.6 }}>
                 You have unsaved annotations on
               </div>
-              <div style={{
-                marginTop: '0.4rem', display: 'inline-block',
-                background: 'rgba(99,102,241,0.15)',
-                border: '1px solid rgba(99,102,241,0.3)',
-                borderRadius: 8, padding: '0.25rem 0.75rem',
-                color: '#a5b4fc', fontWeight: 700, fontSize: '0.82rem',
-              }}>
-                📄 {formInstance.template_name}
-              </div>
+              {unsavedFormNames.map(name => (
+                <div key={name} style={{
+                  margin: '0.4rem 0.2rem 0', display: 'inline-block',
+                  background: 'rgba(99,102,241,0.15)',
+                  border: '1px solid rgba(99,102,241,0.3)',
+                  borderRadius: 8, padding: '0.25rem 0.75rem',
+                  color: '#a5b4fc', fontWeight: 700, fontSize: '0.82rem',
+                }}>
+                  📄 {name}
+                </div>
+              ))}
               <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.82rem', marginTop: '0.5rem' }}>
                 Save now or your changes will be lost.
               </div>
@@ -1571,7 +1581,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
               >
                 {dialogSaving
                   ? <><Loader size={15} className="spin" /> Saving...</>
-                  : <><CheckCircle size={15} /> Save &amp; Continue</>
+                  : <><CheckCircle size={15} /> Save &amp; Exit</>
                 }
               </button>
               {/* Skip & Continue */}
@@ -1589,7 +1599,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
                 onMouseEnter={e => { if (!dialogSaving) e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
               >
-                <ChevronRight size={15} /> Skip &amp; Continue
+                <ChevronRight size={15} /> Exit without saving
               </button>
               {/* Cancel */}
               <button
@@ -1605,7 +1615,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
                 onMouseEnter={e => { if (!dialogSaving) e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
                 onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.35)' }}
               >
-                ✕ Cancel — stay on this form
+                ✕ Cancel — keep editing
               </button>
             </div>
           </div>
@@ -1617,18 +1627,19 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
           <ChevronLeft size={16} /> Back
         </button>
 
-        {allForms.length > 1 && (
+        {onSwitchForm && (
           <button
             onClick={() => setShowFormsQueue(v => !v)}
+            title="Records"
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
-              background: showFormsQueue ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.08)',
+              background: showFormsQueue ? 'rgba(125,216,125,0.25)' : 'rgba(255,255,255,0.08)',
               border: 'none', borderRadius: 8, padding: '0.4rem 0.75rem',
-              color: showFormsQueue ? '#a5b4fc' : 'rgba(255,255,255,0.7)',
+              color: showFormsQueue ? '#86efac' : 'rgba(255,255,255,0.7)',
               cursor: 'pointer', fontSize: '0.825rem', fontWeight: 600,
             }}
           >
-            <ClipboardList size={15} /> All Forms ({allForms.length})
+            <ClipboardList size={15} /> Records ({allForms.length})
           </button>
         )}
 
@@ -1641,6 +1652,14 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
             </div>
           )}
         </div>
+
+        {/* First open of a template that hasn't been scanned yet — one-time, auto-fill follows */}
+        {scanProgress && (
+          <div title="One-time scan of this form so patient details land in the right places"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#a5b4fc', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <Loader size={13} className="spin" /> Reading form layout {scanProgress.page}/{scanProgress.pages}
+          </div>
+        )}
 
         {/* Toggle patient info sidebar */}
         {patientData && (
@@ -1655,12 +1674,12 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
 
         {/* Page navigation */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <button onClick={goToPrev} disabled={page <= 1}
+          <button onClick={goToPrev} disabled={!canGoPrev}
             style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 7, width: 32, height: 32, cursor: 'pointer', color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <ChevronLeft size={15} />
           </button>
           <span style={{ color: '#fff', fontSize: '0.875rem', minWidth: 70, textAlign: 'center' }}>Page {page} / {totalPages}</span>
-          <button onClick={goToNext} disabled={page >= totalPages && (allForms.length <= 1 || allForms.findIndex(f => f.id === formInstance.id) >= allForms.length - 1)}
+          <button onClick={goToNext} disabled={!canGoNext}
             style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 7, width: 32, height: 32, cursor: 'pointer', color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <ChevronRight size={15} />
           </button>
@@ -1708,52 +1727,21 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
       </div>
 
       {/* Main content area: PDF + optional sidebars */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
-        {/* Left Sidebar: Forms Queue */}
-        {showFormsQueue && allForms.length > 1 && (
-          <div style={{
-            width: 280, background: '#111827', borderRight: '1px solid rgba(255,255,255,0.06)',
-            display: 'flex', flexDirection: 'column', flexShrink: 0,
-            animation: 'slideInRight 250ms ease reverse'
-          }}>
-            <div style={{ padding: '1rem', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: '#fff', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Assigned Forms</span>
-              <button onClick={() => setShowFormsQueue(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer' }}><ChevronLeft size={16} /></button>
-            </div>
-            <div style={{ flex: 1, overflow: 'auto', padding: '0.75rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {allForms.map((f, i) => {
-                  const isActive = f.id === formInstance.id
-                  return (
-                    <div
-                      key={f.id}
-                      onClick={() => onSwitchForm && requestFormSwitch('left', () => onSwitchForm(f))}
-                      style={{
-                        padding: '0.875rem', borderRadius: 10, cursor: 'pointer',
-                        background: isActive ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.03)',
-                        border: `1.5px solid ${isActive ? 'rgba(99,102,241,0.4)' : 'transparent'}`,
-                        transition: 'all 150ms'
-                      }}
-                      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
-                      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                    >
-                      <div style={{ fontSize: '0.8rem', fontWeight: isActive ? 700 : 600, color: isActive ? '#fff' : 'rgba(255,255,255,0.6)', marginBottom: '0.25rem' }}>
-                        {i + 1}. {f.template_name}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.375rem', borderRadius: 4, background: f.status === 'completed' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)', color: f.status === 'completed' ? '#10b981' : '#f59e0b', textTransform: 'uppercase' }}>
-                          {f.status || 'blank'}
-                        </span>
-                        <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.3)' }}>
-                          {f.updated_at ? new Date(f.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : ''}
-                        </span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        {/* Records panel — slides over the left of the form */}
+        {showFormsQueue && onSwitchForm && (
+          <RecordsPanel
+            forms={allForms}
+            activeId={formInstance.id}
+            activePages={totalPages}
+            sort={sort}
+            onSortChange={changeSort}
+            patientId={patientData?.id || formInstance.patient_id}
+            onSelect={switchToForm}
+            onAddForm={onAddForm ? addFormFromPanel : undefined}
+            onAddForms={onAddForm ? addFormsFromPanel : undefined}
+            onClose={() => setShowFormsQueue(false)}
+          />
         )}
 
         {/* PDF + Ink canvas area */}
@@ -1761,16 +1749,19 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
           ref={containerRef} 
           onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
+          onPointerCancel={e => activePointersRef.current.delete(e.pointerId)}
           onWheel={(e) => {
             // Only intercept clearly horizontal trackpad swipes.
             // If the event has any significant vertical component, let the browser scroll natively.
             const absX = Math.abs(e.deltaX)
             const absY = Math.abs(e.deltaY)
-            if (absX > absY && absX > 40 && !transitioning) {
-              e.preventDefault()
-              if (e.deltaX > 0) goToNext()
-              else goToPrev()
-            }
+            if (absX <= absY || absX <= 40) return
+            const now = Date.now()
+            const quietFor = now - lastWheelRef.current
+            lastWheelRef.current = now
+            if (quietFor < 400 || transitioning) return // still the same (inertial) gesture
+            if (e.deltaX > 0) goToNext()
+            else goToPrev()
           }}
           style={{ 
             flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', 
@@ -1817,7 +1808,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
               <button 
                 onClick={goToPrev}
                 title="Previous Form/Page"
-                style={{ position: 'sticky', top: '50%', left: 0, transform: 'translateY(-50%)', width: 44, height: 100, background: 'linear-gradient(90deg, rgba(0,0,0,0.3), transparent)', border: 'none', borderRadius: '0 12px 12px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', zIndex: 10, transition: 'all 150ms' }}
+                style={{ visibility: canGoPrev ? 'visible' : 'hidden', position: 'sticky', top: '50%', left: 0, transform: 'translateY(-50%)', width: 44, height: 100, background: 'linear-gradient(90deg, rgba(0,0,0,0.3), transparent)', border: 'none', borderRadius: '0 12px 12px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', zIndex: 10, transition: 'all 150ms' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'linear-gradient(90deg, rgba(99,102,241,0.4), transparent)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'linear-gradient(90deg, rgba(0,0,0,0.3), transparent)'}
               ><ChevronLeft size={28} /></button>
@@ -1825,7 +1816,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
               <button 
                 onClick={goToNext}
                 title="Next Form/Page"
-                style={{ position: 'sticky', top: '50%', left: 'calc(100% - 44px)', transform: 'translateY(-50%)', width: 44, height: 100, background: 'linear-gradient(-90deg, rgba(0,0,0,0.3), transparent)', border: 'none', borderRadius: '12px 0 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', zIndex: 10, transition: 'all 150ms' }}
+                style={{ visibility: canGoNext ? 'visible' : 'hidden', position: 'sticky', top: '50%', left: 'calc(100% - 44px)', transform: 'translateY(-50%)', width: 44, height: 100, background: 'linear-gradient(-90deg, rgba(0,0,0,0.3), transparent)', border: 'none', borderRadius: '12px 0 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', zIndex: 10, transition: 'all 150ms' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'linear-gradient(-90deg, rgba(99,102,241,0.4), transparent)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'linear-gradient(-90deg, rgba(0,0,0,0.3), transparent)'}
               ><ChevronRight size={28} /></button>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, UserPlus, Eye, EyeOff, Loader, X, CheckCircle, AlertCircle, Users, Shield } from 'lucide-react'
+import { Plus, Search, UserPlus, Eye, EyeOff, Loader, X, CheckCircle, AlertCircle, Users, Shield, Pencil, Trash2, KeyRound, Save } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { BASE_URL } from '../api'
+import { BASE_URL, api } from '../api'
 
 const ROLES = [
   { value: 'doctor', label: 'Doctor', color: '#6366f1', bg: 'rgba(99,102,241,0.1)' },
@@ -184,6 +184,88 @@ function CreateStaffModal({ token, hospitalName, onClose, onCreated }) {
   )
 }
 
+// Edit name / role / department / contact, and optionally set a new password
+function EditStaffModal({ member, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: member.name || '', role: member.role, department: member.department || '',
+    phone: member.phone || '', email: member.email || '', password: '',
+  })
+  const [show, setShow] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    if (!form.name.trim()) { setError('Name is required'); return }
+    if (form.password && form.password.length < 6) { setError('New password must be at least 6 characters'); return }
+    if (form.role !== member.role && !window.confirm(`Change ${member.name}'s role from ${getRoleStyle(member.role).label} to ${getRoleStyle(form.role).label}? Their access changes at next login.`)) return
+    setSaving(true); setError(null)
+    try {
+      const { password, ...rest } = form
+      const updated = await api.updateStaff(member.id, password ? form : rest)
+      onSaved(updated, !!password)
+      onClose()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <div>
+            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>Edit Staff</h4>
+            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2, fontFamily: 'monospace' }}>{member.login_id}</p>
+          </div>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', color: '#dc2626', padding: '0.625rem 0.875rem', borderRadius: 'var(--radius-lg)', marginBottom: '1rem', fontSize: '0.85rem' }}>{error}</div>}
+          <div className="grid grid-2" style={{ gap: '1rem' }}>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Full Name *</label>
+              <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Role</label>
+              <select className="form-input form-select" value={form.role} onChange={e => set('role', e.target.value)}>
+                {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Department</label>
+              <input className="form-input" list="staff-departments" value={form.department} onChange={e => set('department', e.target.value)} />
+              <datalist id="staff-departments">{DEPARTMENTS.map(d => <option key={d} value={d} />)}</datalist>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Phone</label>
+              <input className="form-input" value={form.phone} onChange={e => set('phone', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Email</label>
+              <input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} />
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label"><KeyRound size={12} style={{ display: 'inline', marginRight: 4 }} />Reset Password (leave blank to keep)</label>
+              <div style={{ position: 'relative' }}>
+                <input className="form-input" type={show ? 'text' : 'password'} value={form.password} onChange={e => set('password', e.target.value)} placeholder="New password, min 6 characters" style={{ paddingRight: '2.5rem' }} />
+                <button type="button" onClick={() => setShow(v => !v)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-400)' }}>
+                  {show ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? <Loader size={14} className="spin" /> : <Save size={14} />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function StaffManagement() {
   const { token, user } = useAuth()
   const [staff, setStaff] = useState([])
@@ -192,6 +274,7 @@ export default function StaffManagement() {
   const [roleFilter, setRoleFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
   const [toggling, setToggling] = useState(null)
+  const [editing, setEditing] = useState(null)
 
   const fetchStaff = useCallback(async () => {
     setLoading(true)
@@ -219,6 +302,20 @@ export default function StaffManagement() {
         setStaff(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s))
       }
     } catch { } finally { setToggling(null) }
+  }
+
+  const handleSaved = (updated, passwordReset) => {
+    setStaff(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s))
+    if (passwordReset) alert(`Password updated for ${updated.name}. Share the new password with them securely.`)
+  }
+
+  const handleDelete = async (member) => {
+    if (!window.confirm(`Permanently delete the login for ${member.name} (${member.login_id})? Consider "Suspend" if they may return.`)) return
+    setToggling(member.id)
+    try {
+      await api.deleteStaff(member.id)
+      setStaff(prev => prev.filter(s => s.id !== member.id))
+    } catch (e) { alert('Delete failed: ' + e.message) } finally { setToggling(null) }
   }
 
   const filtered = staff.filter(s => {
@@ -328,14 +425,18 @@ export default function StaffManagement() {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className={`btn btn-sm ${s.is_active ? 'btn-secondary' : 'btn-primary'}`}
-                        style={{ fontSize: '0.75rem' }}
-                        disabled={toggling === s.id}
-                        onClick={() => toggleActive(s)}
-                      >
-                        {toggling === s.id ? <Loader size={12} className="spin" /> : s.is_active ? <><AlertCircle size={12} /> Suspend</> : <><CheckCircle size={12} /> Activate</>}
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <button
+                          className={`btn btn-sm ${s.is_active ? 'btn-secondary' : 'btn-primary'}`}
+                          style={{ fontSize: '0.75rem' }}
+                          disabled={toggling === s.id}
+                          onClick={() => toggleActive(s)}
+                        >
+                          {toggling === s.id ? <Loader size={12} className="spin" /> : s.is_active ? <><AlertCircle size={12} /> Suspend</> : <><CheckCircle size={12} /> Activate</>}
+                        </button>
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Edit / reset password" onClick={() => setEditing(s)}><Pencil size={13} /></button>
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Delete login" style={{ color: '#dc2626' }} disabled={toggling === s.id} onClick={() => handleDelete(s)}><Trash2 size={13} /></button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -349,6 +450,7 @@ export default function StaffManagement() {
       </div>
 
     </div>
+    {editing && <EditStaffModal member={editing} onClose={() => setEditing(null)} onSaved={handleSaved} />}
     {showModal && <CreateStaffModal token={token} hospitalName={user?.hospital_name} onClose={() => setShowModal(false)} onCreated={handleCreated} />}
     </>
   )

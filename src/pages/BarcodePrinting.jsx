@@ -3,6 +3,7 @@ import {
   Printer, Search, Hash, RefreshCw, X, Loader, Users, CheckCircle, Package
 } from 'lucide-react'
 import { api } from '../api'
+import { QrImage, Barcode128 } from '../components/Codes'
 
 const BARCODE_TYPES = [
   { id: '1d', label: '1D Barcode (Code-128)' },
@@ -24,11 +25,6 @@ function BarcodePreview({ patient, type, size }) {
 
   const { w, h, showDetails, compact } = getDims()
 
-  // We use placeholder images since actual barcode gen requires a library like bwip-js or react-barcode,
-  // but we can simulate the UI. For QR we use qrserver API.
-  const barcodeUrl = type === 'qr'
-    ? `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(patient.id)}&size=${w}x${w}`
-    : `https://barcode.tec-it.com/barcode.ashx?data=${patient.id}&code=Code128&dpi=96&dataseparator=`
 
   return (
     <div style={{
@@ -43,9 +39,9 @@ function BarcodePreview({ patient, type, size }) {
       )}
       
       {type === 'qr' ? (
-        <img src={barcodeUrl} alt="QR" style={{ width: compact ? 60 : 100, height: compact ? 60 : 100 }} />
+        <QrImage data={patient.id} size={200} color="#000000" alt="QR" style={{ width: compact ? 60 : 100, height: compact ? 60 : 100 }} />
       ) : (
-        <img src={barcodeUrl} alt="1D Barcode" style={{ width: w, height: h, objectFit: 'contain' }} className="barcode-img" />
+        <Barcode128 value={patient.id} width={w} height={h} className="barcode-img" />
       )}
       
       {showDetails && (

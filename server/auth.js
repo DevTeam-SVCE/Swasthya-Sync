@@ -26,6 +26,14 @@ function makeLoginId(role, name, hospitalName) {
   return `${prefix}.${namePart}.${slug}`
 }
 
+async function nextDoctorId(db) {
+  const { rows: [r] } = await db.query(
+    `SELECT MAX(CAST(SUBSTRING(id FROM '^D-(\\d+)$') AS INTEGER)) AS n FROM doctors WHERE id ~ '^D-\\d+$'`)
+  return `D-${String((r.n ?? 0) + 1).padStart(3, '0')}`
+}
+
+const STAFF_ROLES = ['doctor', 'nurse', 'receptionist', 'lab_tech', 'pharmacist']
+
 // ─── MIDDLEWARE ────────────────────────────────────────────────
 
 export function requireAuth(req, res, next) {
@@ -223,9 +231,7 @@ router.post('/staff', requireAdmin, async (req, res) => {
     // If role is doctor, also create a record in the doctors table
     if (role === 'doctor') {
       // Generate a new doctor ID
-      const { rows: lastDoc } = await client.query(`SELECT id FROM doctors ORDER BY id DESC LIMIT 1`)
-      const lastNum = lastDoc.length ? parseInt(lastDoc[0].id.replace('D-', '')) : 0
-      const newDocId = `D-${String(lastNum + 1).padStart(3, '0')}`
+      const newDocId = await nextDoctorId(client)
 
       await client.query(
         `INSERT INTO doctors (id, hospital_id, name, department, qualification, experience, status, schedule, phone, email, user_id)
@@ -249,22 +255,30 @@ router.post('/staff', requireAdmin, async (req, res) => {
 // PATCH /api/auth/staff/:id  — Admin: toggle active / update
 // ─────────────────────────────────────────────────────────────
 router.patch('/staff/:id', requireAdmin, async (req, res) => {
-  const { is_active, password, name, department, phone } = req.body
+  const { is_active, password, name, department, phone, email, role } = req.body
   const userId = req.params.id
 
+  const client = await pool.connect()
   try {
     // Verify the staff belongs to the same hospital
-    const { rows } = await pool.query(
+    const { rows } = await client.query(
       'SELECT id, role FROM users WHERE id=$1 AND hospital_id=$2', [userId, req.user.hospitalId]
     )
     if (!rows.length) return res.status(404).json({ error: 'Staff member not found' })
-    const staffRole = rows[0].role
+    const oldRole = rows[0].role
+    if (oldRole === 'admin') return res.status(403).json({ error: 'Admin accounts cannot be edited here' })
+    if (role !== undefined && !STAFF_ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' })
 
     const updates = {}
-    if (is_active !== undefined) updates.is_active = is_active
-    if (name) updates.name = name
-    if (department) updates.department = department
-    if (phone) updates.phone = phone
+    if (is_active !== undefined) updates.is_active = !!is_active
+    if (name !== undefined) {
+      if (!String(name).trim()) return res.status(400).json({ error: 'Name cannot be empty' })
+      updates.name = String(name).trim()
+    }
+    if (department !== undefined) updates.department = department || null
+    if (phone !== undefined) updates.phone = phone || null
+    if (email !== undefined) updates.email = email || null
+    if (role !== undefined && role !== oldRole) updates.role = role
     if (password) {
       if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
       updates.password_hash = await bcrypt.hash(password, 12)
@@ -272,33 +286,44 @@ router.patch('/staff/:id', requireAdmin, async (req, res) => {
 
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'Nothing to update' })
 
+    await client.query('BEGIN')
     const keys = Object.keys(updates)
     const clause = keys.map((k, i) => `${k}=$${i + 2}`).join(',')
     const vals = [userId, ...keys.map(k => updates[k])]
 
-    const { rows: [updated] } = await pool.query(
-      `UPDATE users SET ${clause} WHERE id=$1 RETURNING id, name, login_id, role, department, phone, is_active`, vals
+    const { rows: [updated] } = await client.query(
+      `UPDATE users SET ${clause} WHERE id=$1 RETURNING id, name, email, login_id, role, department, phone, is_active, created_at`, vals
     )
 
-    // Sync changes to the doctors table if the staff is a doctor
-    if (staffRole === 'doctor') {
-      const docUpdates = {}
-      if (name) docUpdates.name = name
-      if (department) docUpdates.department = department
-      if (phone) docUpdates.phone = phone
-      if (is_active !== undefined) docUpdates.status = is_active ? 'available' : 'on-leave'
-
-      const docKeys = Object.keys(docUpdates)
-      if (docKeys.length) {
-        const docClause = docKeys.map((k, i) => `${k}=$${i + 2}`).join(',')
-        const docVals = [userId, ...docKeys.map(k => docUpdates[k])]
-        await pool.query(`UPDATE doctors SET ${docClause} WHERE user_id=$1`, docVals)
+    // Keep the doctors table in step with the login
+    const newRole = updated.role
+    if (newRole === 'doctor') {
+      const { rows: doc } = await client.query('SELECT id FROM doctors WHERE user_id=$1', [userId])
+      if (!doc.length) {
+        await client.query(
+          `INSERT INTO doctors (id, hospital_id, name, department, status, phone, email, user_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [await nextDoctorId(client), req.user.hospitalId, updated.name, updated.department || 'General',
+           updated.is_active ? 'available' : 'on-leave', updated.phone, updated.email, userId])
+      } else {
+        await client.query(
+          `UPDATE doctors SET name=$2, department=COALESCE($3, department), phone=$4, email=$5,
+             status = CASE WHEN $6 THEN (CASE WHEN status='on-leave' THEN 'available' ELSE status END) ELSE 'on-leave' END
+           WHERE user_id=$1`,
+          [userId, updated.name, updated.department, updated.phone, updated.email, updated.is_active])
       }
+    } else if (oldRole === 'doctor') {
+      // No longer a doctor: keep the doctor record for history, but take them off the roster
+      await client.query(`UPDATE doctors SET status='on-leave' WHERE user_id=$1`, [userId])
     }
 
+    await client.query('COMMIT')
     res.json(updated)
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {})
     res.status(500).json({ error: e.message })
+  } finally {
+    client.release()
   }
 })
 
@@ -306,15 +331,29 @@ router.patch('/staff/:id', requireAdmin, async (req, res) => {
 // DELETE /api/auth/staff/:id  — Admin: permanently remove
 // ─────────────────────────────────────────────────────────────
 router.delete('/staff/:id', requireAdmin, async (req, res) => {
+  const client = await pool.connect()
   try {
-    // Also delete the linked doctor record if exists
-    await pool.query('DELETE FROM doctors WHERE user_id=$1 AND hospital_id=$2',
-      [req.params.id, req.user.hospitalId])
-    await pool.query('DELETE FROM users WHERE id=$1 AND hospital_id=$2 AND role!=\'admin\'',
-      [req.params.id, req.user.hospitalId])
+    const { rows: [u] } = await client.query(
+      `SELECT id FROM users WHERE id=$1 AND hospital_id=$2 AND role != 'admin'`, [req.params.id, req.user.hospitalId])
+    if (!u) return res.status(404).json({ error: 'Staff member not found' })
+    await client.query('BEGIN')
+    // Remove the linked doctor record; if patients/visits reference it, keep it (unlinked, on leave)
+    await client.query('SAVEPOINT doc')
+    try {
+      await client.query('DELETE FROM doctors WHERE user_id=$1 AND hospital_id=$2', [u.id, req.user.hospitalId])
+    } catch {
+      await client.query('ROLLBACK TO SAVEPOINT doc')
+      await client.query(`UPDATE doctors SET user_id=NULL, status='on-leave' WHERE user_id=$1`, [u.id])
+    }
+    await client.query('UPDATE users SET created_by=NULL WHERE created_by=$1', [u.id])
+    await client.query('DELETE FROM users WHERE id=$1', [u.id])
+    await client.query('COMMIT')
     res.json({ success: true })
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {})
     res.status(500).json({ error: e.message })
+  } finally {
+    client.release()
   }
 })
 

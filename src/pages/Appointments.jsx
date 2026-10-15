@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Calendar, Plus, Search, Clock, User, Phone, Stethoscope,
   CheckCircle, X, Loader, RefreshCw, Filter, ChevronLeft,
-  ChevronRight, AlertTriangle, Hash
+  ChevronRight, AlertTriangle, Hash, Pencil, Trash2
 } from 'lucide-react'
 import { api } from '../api'
+import EditVisitModal from '../components/EditVisitModal'
 
 const VISIT_TYPES = ['New Patient', 'Follow-up', 'Review', 'Emergency', 'Procedure', 'Post-Op']
 const TIME_SLOTS = [
@@ -209,6 +210,7 @@ export default function Appointments() {
   const [deptFilter, setDeptFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
   const [updatingId, setUpdatingId] = useState(null)
+  const [editing, setEditing] = useState(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
@@ -243,6 +245,15 @@ export default function Appointments() {
       await api.updateOPD(appt.id, { status: 'cancelled' })
       setAppointments(prev => prev.map(a => a.id === appt.id ? { ...a, status: 'cancelled' } : a))
     } catch (e) { alert('Cancel failed: ' + e.message) } finally { setUpdatingId(null) }
+  }
+
+  const handleDelete = async (appt) => {
+    if (!window.confirm(`Delete the appointment for ${appt.patient_name} (token ${appt.token})? Use Cancel to keep a record instead.`)) return
+    setUpdatingId(appt.id)
+    try {
+      await api.deleteOPD(appt.id)
+      setAppointments(prev => prev.filter(a => a.id !== appt.id))
+    } catch (e) { alert('Delete failed: ' + e.message) } finally { setUpdatingId(null) }
   }
 
   // Filter client-side by dept
@@ -424,6 +435,12 @@ export default function Appointments() {
                             <X size={11} />
                           </button>
                         )}
+                        {!['completed', 'cancelled', 'no-show'].includes(a.status) && (
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Edit / reschedule" onClick={() => setEditing(a)}><Pencil size={12} /></button>
+                        )}
+                        {a.status !== 'completed' && (
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Delete appointment" style={{ color: '#dc2626' }} disabled={updatingId === a.id} onClick={() => handleDelete(a)}><Trash2 size={12} /></button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -440,6 +457,8 @@ export default function Appointments() {
 
     </div>
     {showModal && <BookModal onClose={() => setShowModal(false)} onSave={handleSave} doctors={doctors} />}
+    {editing && <EditVisitModal visit={editing} doctors={doctors} onClose={() => setEditing(null)}
+      onSaved={u => setAppointments(prev => prev.map(a => a.id === u.id ? u : a))} />}
     </>
   )
 }

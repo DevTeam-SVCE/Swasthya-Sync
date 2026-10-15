@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { PackageOpen, Search, Plus, AlertTriangle, Edit3, X, Save } from 'lucide-react'
+import { Search, Plus, Edit3, X, Trash2 } from 'lucide-react'
 import { api } from '../api'
+import StockItemModal from '../components/StockItemModal'
 
 export default function Inventory() {
   const [items, setItems] = useState([])
@@ -9,7 +10,6 @@ export default function Inventory() {
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
-  const [editPrice, setEditPrice] = useState('')
 
   const fetchInventory = async () => {
     setLoading(true)
@@ -27,19 +27,19 @@ export default function Inventory() {
     fetchInventory()
   }, [])
 
-  const handleUpdatePrice = async (id) => {
+  const handleDelete = async (item) => {
+    if (!window.confirm(`Delete "${item.name}" from inventory? This cannot be undone.`)) return
     try {
-      await api.updatePharmacy(id, { price: Number(editPrice) })
-      setEditingItem(null)
-      fetchInventory()
+      await api.deletePharmacy(item.id)
+      setItems(prev => prev.filter(i => i.id !== item.id))
     } catch (e) {
-      alert("Failed to update price: " + e.message)
+      alert("Failed to delete: " + e.message)
     }
   }
 
   const handleAddStock = async (form) => {
     try {
-      await api.createPharmacy(form)
+      await api.createPharmacy({ ...form, stock: parseInt(form.stock) || 0, price: Number(form.price) || 0 })
       setShowAddModal(false)
       fetchInventory()
     } catch (e) {
@@ -47,12 +47,10 @@ export default function Inventory() {
     }
   }
 
-  const filteredItems = items.filter(i => 
-    i.category !== 'BLOOD_BANK' && (
-      i.name.toLowerCase().includes(search.toLowerCase()) || 
-      i.category?.toLowerCase().includes(search.toLowerCase()) ||
-      i.id.toString().includes(search)
-    )
+  const filteredItems = items.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    i.category?.toLowerCase().includes(search.toLowerCase()) ||
+    i.id.toString().includes(search)
   )
 
   const lowStockCount = items.filter(i => i.status === 'Low Stock').length
@@ -121,23 +119,9 @@ export default function Inventory() {
                     <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)' }}>{item.unit}</div>
                   </td>
                   <td>
-                    {editingItem === item.id ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <input 
-                          type="number" className="form-input form-sm" 
-                          style={{ width: 80 }} 
-                          value={editPrice} 
-                          onChange={e => setEditPrice(e.target.value)} 
-                          autoFocus
-                        />
-                        <button className="btn btn-primary btn-sm btn-icon" onClick={() => handleUpdatePrice(item.id)}><Save size={14}/></button>
-                        <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setEditingItem(null)}><X size={14}/></button>
-                      </div>
-                    ) : (
-                      <div style={{ fontWeight: 600 }}>
-                        ₹{Number(item.price || 0).toLocaleString()}
-                      </div>
-                    )}
+                    <div style={{ fontWeight: 600 }}>
+                      ₹{Number(item.price || 0).toLocaleString()}
+                    </div>
                   </td>
                   <td>
                     <span style={{
@@ -149,11 +133,14 @@ export default function Inventory() {
                     </span>
                   </td>
                   <td>
-                    {editingItem !== item.id && (
-                      <button className="btn btn-secondary btn-sm" onClick={() => { setEditingItem(item.id); setEditPrice(item.price || 0) }}>
-                        <Edit3 size={14} style={{ marginRight: 4 }} /> Edit Price
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setEditingItem(item)} title="Edit details, price or stock">
+                        <Edit3 size={14} style={{ marginRight: 4 }} /> Edit
                       </button>
-                    )}
+                      <button className="btn btn-ghost btn-sm btn-icon" style={{ color: '#dc2626' }} onClick={() => handleDelete(item)} title="Delete item">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -163,6 +150,7 @@ export default function Inventory() {
       </div>
 
       {showAddModal && <AddStockModal onClose={() => setShowAddModal(false)} onSave={handleAddStock} />}
+      {editingItem && <StockItemModal item={editingItem} onClose={() => setEditingItem(null)} onSaved={u => setItems(prev => prev.map(i => i.id === u.id ? u : i))} />}
     </div>
   )
 }

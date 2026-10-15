@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Droplet, Plus, AlertCircle, Heart, CheckCircle, Loader, X } from 'lucide-react'
+import { Droplet, Plus, AlertCircle, Heart, CheckCircle, Loader, X, Trash2 } from 'lucide-react'
 import { api } from '../api'
 
 const BLOOD_GROUPS = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-']
@@ -16,51 +16,14 @@ export default function BloodBank() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Fetch Blood Inventory (stored as pharmacy items with category='BLOOD_BANK')
-      const pharmacy = await api.getPharmacy()
-      let bloodInv = pharmacy.filter(p => p.category === 'BLOOD_BANK')
-
-      // Auto-initialize blood groups if they don't exist
-      if (bloodInv.length < 8) {
-        const existingGroups = bloodInv.map(b => b.name)
-        const missingGroups = BLOOD_GROUPS.filter(g => !existingGroups.includes(g))
-        
-        for (const grp of missingGroups) {
-          const newGrp = await api.createPharmacy({
-            name: grp, category: 'BLOOD_BANK', stock: 0, unit: 'Units', price: 0, manufacturer: 'Internal'
-          })
-          bloodInv.push(newGrp)
-        }
-      }
-      // Sort to match standard display
-      bloodInv.sort((a, b) => BLOOD_GROUPS.indexOf(a.name) - BLOOD_GROUPS.indexOf(b.name))
-      setInventory(bloodInv)
-
-      // 2. Fetch Admitted Patients and their Blood Requests
-      const beds = await api.getBeds()
+      const [stock, reqs, beds] = await Promise.all([api.getBloodStock(), api.getBloodRequests(), api.getBeds()])
+      setInventory(stock)
       const occupied = beds.filter(b => b.status === 'occupied')
       setAdmittedPatients(occupied)
-
-      let allReqs = []
-      for (const bed of occupied) {
-        if (bed.patient_id) {
-          const notes = await api.getNotes({ patient_id: bed.patient_id })
-          const bloodReqs = notes
-            .filter(n => n.note_type === 'BLOOD_REQUEST')
-            .map(n => ({
-              id: n.id,
-              patient_id: bed.patient_id,
-              patient: bed.patient_name || 'Unknown',
-              ward: bed.ward,
-              ...JSON.parse(n.content)
-            }))
-          allReqs = [...allReqs, ...bloodReqs]
-        }
-      }
-      setRequests(allReqs.reverse()) // Latest first
-
+      const wardOf = Object.fromEntries(beds.filter(b => b.patient_id).map(b => [b.patient_id, b.ward]))
+      setRequests(reqs.map(r => ({ ...r, ward: wardOf[r.patient_id] || '—' })))
     } catch (e) {
-      console.error(e)
+      alert('Could not load blood bank: ' + e.message)
     } finally {
       setLoading(false)
     }
@@ -70,58 +33,38 @@ export default function BloodBank() {
 
   const handleRegisterDonor = async (form) => {
     try {
-      const invItem = inventory.find(i => i.name === form.group)
-      if (invItem) {
-        await api.updatePharmacy(invItem.id, { stock: Number(invItem.stock) + Number(form.units) })
-        setShowDonorModal(false)
-        loadData()
-      }
+      await api.createBloodDonation({ donor_name: form.donorName, blood_group: form.group, units: Number(form.units) })
+      setShowDonorModal(false)
+      loadData()
     } catch (e) { alert("Failed: " + e.message) }
   }
 
   const handleNewRequest = async (form) => {
     try {
-      const patientBed = admittedPatients.find(p => p.patient_id === form.patient_id)
-      await api.createNote({
-        patient_id: form.patient_id,
-        doctor_id: patientBed?.doctor_id,
-        note_type: 'BLOOD_REQUEST',
-        content: JSON.stringify({
-          group: form.group, units: form.units, type: form.type, priority: form.priority, status: 'Pending', date: new Date().toISOString()
-        })
+      await api.createBloodRequest({
+        patient_id: form.patient_id, blood_group: form.group, units: Number(form.units),
+        product_type: form.type, priority: form.priority, status: 'Pending',
       })
       setShowRequestModal(false)
       loadData()
     } catch (e) { alert("Failed: " + e.message) }
   }
 
+  // Each step updates the same request; issuing deducts stock on the server in one transaction
   const processRequest = async (req, action) => {
     try {
-      if (action === 'Issue') {
-        const invItem = inventory.find(i => i.name === req.group)
-        if (!invItem || Number(invItem.stock) < Number(req.units)) {
-          return alert(`Not enough ${req.group} stock to fulfill this request.`)
-        }
-        // Deduct stock
-        await api.updatePharmacy(invItem.id, { stock: Number(invItem.stock) - Number(req.units) })
-      }
-      
-      // Update clinical note status
-      const updatedData = { ...req, status: action === 'Issue' ? 'Issued' : 'Cross-Matching' }
-      delete updatedData.id; delete updatedData.patient_id; delete updatedData.patient; delete updatedData.ward;
-      
-      // We create a new note to reflect the updated state for simplicity, or ideally update the existing one if supported.
-      // Assuming create acts as an append log.
-      const patientBed = admittedPatients.find(p => p.patient_id === req.patient_id)
-      await api.createNote({
-        patient_id: req.patient_id,
-        doctor_id: patientBed?.doctor_id,
-        note_type: 'BLOOD_REQUEST',
-        content: JSON.stringify(updatedData)
-      })
-      
+      if (action === 'Issue') await api.issueBloodRequest(req.id)
+      else if (action === 'Cancel') {
+        if (!window.confirm(`Cancel the ${req.blood_group} request for ${req.patient_name}?`)) return
+        await api.updateBloodRequest(req.id, { status: 'Cancelled' })
+      } else await api.updateBloodRequest(req.id, { status: 'Cross-Matching' })
       loadData()
     } catch (e) { alert("Failed to process: " + e.message) }
+  }
+
+  const deleteRequest = async (req) => {
+    if (!window.confirm(`Delete request REQ-${req.id}? This cannot be undone.`)) return
+    try { await api.deleteBloodRequest(req.id); loadData() } catch (e) { alert('Delete failed: ' + e.message) }
   }
 
   return (
@@ -146,7 +89,7 @@ export default function BloodBank() {
         ) : (
           <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
             {inventory.map(inv => {
-              const stock = Number(inv.stock)
+              const stock = Number(inv.units)
               const isCritical = stock < 5
               return (
                 <div key={inv.id} style={{ 
@@ -155,7 +98,7 @@ export default function BloodBank() {
                   boxShadow: isCritical ? '0 0 15px rgba(255,255,255,0.3)' : 'none',
                   textAlign: 'center'
                 }}>
-                  <div style={{ fontSize: '1.8rem', fontWeight: 900, marginBottom: '0.2rem', textShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>{inv.name}</div>
+                  <div style={{ fontSize: '1.8rem', fontWeight: 900, marginBottom: '0.2rem', textShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>{inv.blood_group}</div>
                   <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'rgba(255,255,255,0.9)' }}>{stock} <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>Units</span></div>
                   {isCritical && <div style={{ fontSize: '0.7rem', background: '#fff', color: '#b91c1c', padding: '0.15rem 0.4rem', borderRadius: 4, marginTop: '0.5rem', display: 'inline-block', fontWeight: 800 }}>CRITICAL</div>}
                 </div>
@@ -187,20 +130,20 @@ export default function BloodBank() {
               {requests.map(r => (
                 <tr key={r.id}>
                   <td>
-                    <div style={{ fontWeight: 600, color: 'var(--gray-900)' }}>{r.date ? new Date(r.date).toLocaleDateString() : 'Today'}</div>
-                    <div style={{ fontWeight: 700, color: 'var(--primary-700)', fontSize: '0.75rem' }}>REQ-{r.id.toString().slice(-4)}</div>
+                    <div style={{ fontWeight: 600, color: 'var(--gray-900)' }}>{new Date(r.created_at).toLocaleDateString()}</div>
+                    <div style={{ fontWeight: 700, color: 'var(--primary-700)', fontSize: '0.75rem' }}>REQ-{r.id}</div>
                   </td>
                   <td>
-                    <div style={{ fontWeight: 600 }}>{r.patient}</div>
+                    <div style={{ fontWeight: 600 }}>{r.patient_name}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>Loc: {r.ward}</div>
                   </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800 }}>
-                      <span style={{ color: '#b91c1c', fontSize: '1.1rem' }}>{r.group}</span>
+                      <span style={{ color: '#b91c1c', fontSize: '1.1rem' }}>{r.blood_group}</span>
                       <span style={{ color: 'var(--gray-400)' }}>•</span>
                       <span>{r.units} Unit(s)</span>
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontWeight: 600, marginTop: 2 }}>{r.type}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontWeight: 600, marginTop: 2 }}>{r.product_type}</div>
                   </td>
                   <td>
                     {r.priority === 'STAT' || r.priority === 'Urgent' ? <span style={{ color: '#dc2626', fontWeight: 800, fontSize: '0.75rem' }}><AlertCircle size={10} style={{display:'inline'}}/> {r.priority}</span> : <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{r.priority}</span>}
@@ -208,22 +151,30 @@ export default function BloodBank() {
                   <td>
                     <span style={{
                       padding: '0.2rem 0.6rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700,
-                      background: r.status === 'Issued' ? 'rgba(16,185,129,0.1)' : (r.status === 'Cross-Matching' ? 'rgba(59,130,246,0.1)' : 'rgba(245,158,11,0.1)'),
-                      color: r.status === 'Issued' ? '#059669' : (r.status === 'Cross-Matching' ? '#1d4ed8' : '#b45309')
+                      background: r.status === 'Issued' ? 'rgba(16,185,129,0.1)' : r.status === 'Cross-Matching' ? 'rgba(59,130,246,0.1)' : r.status === 'Cancelled' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)',
+                      color: r.status === 'Issued' ? '#059669' : r.status === 'Cross-Matching' ? '#1d4ed8' : r.status === 'Cancelled' ? '#dc2626' : '#b45309'
                     }}>
                       {r.status}
                     </span>
                   </td>
                   <td>
-                    {r.status === 'Pending' && (
-                      <button className="btn btn-secondary btn-sm" onClick={() => processRequest(r, 'Cross-Match')}>Start Cross-Match</button>
-                    )}
-                    {r.status === 'Cross-Matching' && (
-                      <button className="btn btn-primary btn-sm" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => processRequest(r, 'Issue')}>Issue Blood</button>
-                    )}
-                    {r.status === 'Issued' && (
-                      <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600 }}><CheckCircle size={14} style={{display:'inline', marginBottom:-2}}/> Completed</span>
-                    )}
+                    <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                      {r.status === 'Pending' && (
+                        <button className="btn btn-secondary btn-sm" onClick={() => processRequest(r, 'Cross-Match')}>Start Cross-Match</button>
+                      )}
+                      {r.status === 'Cross-Matching' && (
+                        <button className="btn btn-primary btn-sm" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => processRequest(r, 'Issue')}>Issue Blood</button>
+                      )}
+                      {r.status === 'Issued' && (
+                        <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600 }}><CheckCircle size={14} style={{display:'inline', marginBottom:-2}}/> Completed</span>
+                      )}
+                      {(r.status === 'Pending' || r.status === 'Cross-Matching') && (
+                        <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626' }} onClick={() => processRequest(r, 'Cancel')}>Cancel</button>
+                      )}
+                      {(r.status === 'Pending' || r.status === 'Cancelled') && (
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Delete request" style={{ color: '#dc2626' }} onClick={() => deleteRequest(r)}><Trash2 size={13} /></button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

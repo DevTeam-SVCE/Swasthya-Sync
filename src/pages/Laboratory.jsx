@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Search, Plus, FlaskConical, X, CheckCircle, Loader, UploadCloud, FileText, ExternalLink, Download, Mail } from 'lucide-react'
+import { Search, Plus, FlaskConical, X, CheckCircle, Loader, UploadCloud, FileText, ExternalLink, Download, Mail, Trash2 } from 'lucide-react'
 import { api, SERVER_URL } from '../api'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -780,6 +780,13 @@ export default function Laboratory() {
   }, [])
 
   const handleSave    = (o) => setLabOrders(prev => [o, ...prev])
+  const handleDelete  = async (o) => {
+    if (!window.confirm(`Delete lab order #${o.id} (${o.test_name}) for ${o.patient_name}? Use this for orders placed by mistake.`)) return
+    try {
+      await api.deleteLab(o.id)
+      setLabOrders(prev => prev.filter(x => x.id !== o.id))
+    } catch (e) { alert(e.message) }
+  }
   const handleUpdated = (updated) => {
     setLabOrders(prev => prev.map(o => o.id === updated.id ? { ...o, ...updated } : o))
     setSelectedOrder(prev => prev ? { ...prev, ...updated } : prev)
@@ -872,6 +879,9 @@ export default function Laboratory() {
                     <button className="btn btn-sm btn-secondary" style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem' }} onClick={() => setSelectedOrder(o)}>
                       {o.result_pdf_path ? <><FileText size={11} /> PDF</> : o.status === 'Completed' ? <><CheckCircle size={11} /> Results</> : 'View'}
                     </button>
+                    {o.status !== 'Completed' && (
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Delete order" style={{ color: '#dc2626' }} onClick={() => handleDelete(o)}><Trash2 size={13} /></button>
+                    )}
                   </td>
                 </tr>
               ))}

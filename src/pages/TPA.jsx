@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   ShieldCheck, Search, Plus, X, FileText, CheckCircle,
   XCircle, AlertTriangle, Building2, Clock, ChevronDown,
-  Save, RefreshCw, Loader
+  Save, RefreshCw, Loader, Trash2
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -46,21 +46,16 @@ function NewClaimModal({ patients, onClose, onSave }) {
   const handleSave = async () => {
     if (!form.patient_id || !form.policy_no || !form.amount_requested) return
     setSaving(true)
-    const pt = patients.find(p => p.id === form.patient_id)
-    const claim = {
-      id: `CLM-${Date.now().toString().slice(-4)}`,
-      patient_id: form.patient_id,
-      patient_name: pt?.name || 'Unknown',
-      tpa: form.tpa,
-      policy_no: form.policy_no,
-      amount_requested: parseInt(form.amount_requested),
-      amount_approved: 0,
-      status: form.status,
-      date: new Date().toISOString(),
-    }
-    await new Promise(r => setTimeout(r, 400))
-    setSaving(false)
-    onSave(claim)
+    try {
+      const saved = await api.createClaim({
+        patient_id: form.patient_id,
+        tpa_name: form.tpa,
+        policy_no: form.policy_no.trim(),
+        amount_requested: Number(form.amount_requested),
+        status: form.status,
+      })
+      onSave({ ...saved, patient_name: patients.find(p => p.id === form.patient_id)?.name })
+    } catch (e) { alert('Could not submit claim: ' + e.message) } finally { setSaving(false) }
   }
 
   return (
@@ -124,15 +119,21 @@ function NewClaimModal({ patients, onClose, onSave }) {
 /* ── Update Status modal ────────────────────────────────── */
 function UpdateModal({ claim, onClose, onSave }) {
   const [status, setStatus]   = useState(claim.status)
-  const [approved, setApproved] = useState(claim.amount_approved > 0 ? claim.amount_approved : '')
-  const [remark, setRemark]   = useState('')
+  const [approved, setApproved] = useState(Number(claim.amount_approved) > 0 ? Number(claim.amount_approved) : '')
+  const [remark, setRemark]   = useState(claim.remarks || '')
   const [saving, setSaving]   = useState(false)
 
   const handleSave = async () => {
+    if (status === 'Approved' && !(Number(approved) > 0)) { alert('Enter the approved amount'); return }
     setSaving(true)
-    await new Promise(r => setTimeout(r, 350))
-    setSaving(false)
-    onSave({ ...claim, status, amount_approved: approved ? parseInt(approved) : 0 })
+    try {
+      const saved = await api.updateClaim(claim.id, {
+        status,
+        amount_approved: status === 'Approved' ? Number(approved) : 0,
+        remarks: remark.trim(),
+      })
+      onSave({ ...claim, ...saved })
+    } catch (e) { alert('Could not update claim: ' + e.message) } finally { setSaving(false) }
   }
 
   return (
@@ -141,7 +142,7 @@ function UpdateModal({ claim, onClose, onSave }) {
         <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--gray-900)' }}>Update Claim Status</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: '0.15rem' }}>{claim.id} · {claim.patient_name}</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: '0.15rem' }}>CLM-{claim.id} · {claim.patient_name}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-400)', padding: 4 }}><X size={18} /></button>
         </div>
@@ -186,37 +187,25 @@ export default function TPA() {
   const [updateTarget, setUpdateTarget] = useState(null)
 
   useEffect(() => {
-    api.getPatients().then(pts => {
-      setPatients(pts)
-      // Seed mock claims from real patients
-      const seed = pts.slice(0, Math.min(pts.length, 6)).map((p, i) => ({
-        id: `CLM-${1000 + i}`,
-        patient_id: p.id,
-        patient_name: p.name,
-        tpa: TPA_COMPANIES[i % TPA_COMPANIES.length],
-        policy_no: `POL${Math.floor(Math.random() * 90000000 + 10000000)}`,
-        amount_requested: Math.floor(Math.random() * 80000) + 15000,
-        amount_approved: [1, 2].includes(i) ? Math.floor(Math.random() * 70000) + 15000 : 0,
-        status: STATUSES[i % 4],
-        date: new Date(Date.now() - i * 86400000 * 1.5).toISOString(),
-      }))
-      setClaims(seed)
-    }).catch(() => {}).finally(() => setLoading(false))
+    Promise.all([api.getPatients(), api.getClaims()])
+      .then(([pts, cls]) => { setPatients(pts); setClaims(cls) })
+      .catch(e => alert('Could not load claims: ' + e.message))
+      .finally(() => setLoading(false))
   }, [])
 
   /* Derived stats */
-  const cleared = claims.filter(c => c.status === 'Approved').reduce((s, c) => s + c.amount_approved, 0)
+  const cleared = claims.filter(c => c.status === 'Approved').reduce((s, c) => s + Number(c.amount_approved || 0), 0)
   const fmtAmt  = n => n >= 1e5 ? `Rs ${(n/1e5).toFixed(1)}L` : `Rs ${(n/1000).toFixed(0)}K`
 
   /* Filtering */
   const filtered = claims.filter(c => {
     const q = search.toLowerCase()
     const matchSearch = !q ||
-      c.patient_name.toLowerCase().includes(q) ||
-      c.id.toLowerCase().includes(q) ||
-      c.policy_no.toLowerCase().includes(q) ||
-      c.tpa.toLowerCase().includes(q)
-    const matchTPA = filterTPA === 'All Companies' || c.tpa === filterTPA
+      (c.patient_name || '').toLowerCase().includes(q) ||
+      `clm-${c.id}`.includes(q) ||
+      (c.policy_no || '').toLowerCase().includes(q) ||
+      (c.tpa_name || '').toLowerCase().includes(q)
+    const matchTPA = filterTPA === 'All Companies' || c.tpa_name === filterTPA
     return matchSearch && matchTPA
   })
 
@@ -224,6 +213,13 @@ export default function TPA() {
   const saveClaim = (updated) => {
     setClaims(prev => prev.map(c => c.id === updated.id ? updated : c))
     setUpdateTarget(null)
+  }
+  const deleteClaim = async (c) => {
+    if (!window.confirm(`Delete claim CLM-${c.id} for ${c.patient_name}? This cannot be undone.`)) return
+    try {
+      await api.deleteClaim(c.id)
+      setClaims(prev => prev.filter(x => x.id !== c.id))
+    } catch (e) { alert('Delete failed: ' + e.message) }
   }
 
   return (
@@ -323,9 +319,9 @@ export default function TPA() {
                   return (
                     <tr key={c.id}>
                       <td>
-                        <div style={{ fontWeight: 700, color: 'var(--primary-700)', fontSize: '0.85rem' }}>{c.id}</div>
+                        <div style={{ fontWeight: 700, color: 'var(--primary-700)', fontSize: '0.85rem' }}>CLM-{c.id}</div>
                         <div style={{ fontSize: '0.72rem', color: 'var(--gray-400)', marginTop: '0.125rem' }}>
-                          {new Date(c.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          {new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                         </div>
                       </td>
                       <td>
@@ -335,15 +331,16 @@ export default function TPA() {
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-700)' }}>
                           <Building2 size={13} style={{ color: 'var(--primary-400)', flexShrink: 0 }} />
-                          {c.tpa}
+                          {c.tpa_name}
                         </div>
+                        {c.remarks && <div style={{ fontSize: '0.7rem', color: 'var(--gray-400)', marginTop: 2, maxWidth: 220 }}>{c.remarks}</div>}
                       </td>
                       <td style={{ fontFamily: 'monospace', fontSize: '0.82rem', color: 'var(--gray-600)' }}>{c.policy_no}</td>
                       <td style={{ fontWeight: 700, color: 'var(--gray-900)', fontSize: '0.875rem' }}>
-                        {c.amount_requested.toLocaleString('en-IN')}
+                        {Number(c.amount_requested).toLocaleString('en-IN')}
                       </td>
-                      <td style={{ fontWeight: 700, color: c.amount_approved > 0 ? '#059669' : 'var(--gray-300)', fontSize: '0.875rem' }}>
-                        {c.amount_approved > 0 ? c.amount_approved.toLocaleString('en-IN') : '—'}
+                      <td style={{ fontWeight: 700, color: Number(c.amount_approved) > 0 ? '#059669' : 'var(--gray-300)', fontSize: '0.875rem' }}>
+                        {Number(c.amount_approved) > 0 ? Number(c.amount_approved).toLocaleString('en-IN') : '—'}
                       </td>
                       <td>
                         <span style={{ padding: '0.25rem 0.65rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 700, background: ss.bg, color: ss.color, whiteSpace: 'nowrap' }}>
@@ -351,9 +348,14 @@ export default function TPA() {
                         </span>
                       </td>
                       <td>
-                        <button className="btn btn-secondary btn-sm" onClick={() => setUpdateTarget(c)}>
-                          <ShieldCheck size={13} /> Update
-                        </button>
+                        <div style={{ display: 'flex', gap: '0.25rem' }}>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setUpdateTarget(c)}>
+                            <ShieldCheck size={13} /> Update
+                          </button>
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Delete claim" style={{ color: '#dc2626' }} onClick={() => deleteClaim(c)}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )

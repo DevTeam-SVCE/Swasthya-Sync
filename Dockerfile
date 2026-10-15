@@ -32,8 +32,8 @@ RUN mkdir -p uploads/forms
 COPY --from=build /app/dist /app/dist
 
 # Expose port and start
-EXPOSE 5000
+EXPOSE 5001
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=5001
 
 CMD ["node", "index.js"]

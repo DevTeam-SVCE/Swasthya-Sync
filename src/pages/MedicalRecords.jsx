@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Search, FileText, Eye, Download, Plus, Clock, Loader,
   User, Hash, Printer, FolderOpen, RefreshCw, X, CheckCircle,
-  AlertTriangle, BookOpen, ClipboardList
+  AlertTriangle, BookOpen, ClipboardList, Trash2
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -19,6 +19,15 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Display fields for a stored request
+const withDisplay = (r, patients = []) => ({
+  ...r,
+  patient_name: r.patient_name || patients.find(p => p.id === r.patient_id)?.name || '—',
+  uhid: r.patient_id,
+  requested_at: r.created_at,
+  request_no: `MRR${String(r.id).padStart(5, '0')}`,
+})
+
 // ─── Record Request Modal ─────────────────────────────────────────────────────
 function RequestModal({ patients, onClose, onSave }) {
   const [form, setForm] = useState({
@@ -30,21 +39,16 @@ function RequestModal({ patients, onClose, onSave }) {
   const toggleType = (t) => set('record_types', form.record_types.includes(t) ? form.record_types.filter(x => x !== t) : [...form.record_types, t])
   const [saving, setSaving] = useState(false)
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.patient_id) { alert('Please select a patient'); return }
-    if (!form.requested_by) { alert('Requester name required'); return }
+    if (!form.requested_by.trim()) { alert('Requester name required'); return }
+    if (form.date_from && form.date_to && form.date_from > form.date_to) { alert('"From" date must be before "To" date'); return }
     setSaving(true)
-    setTimeout(() => {
-      onSave({
-        id: Date.now(), ...form,
-        patient_name: patients.find(p => p.id === form.patient_id)?.name || '—',
-        uhid: form.patient_id,
-        status: 'pending',
-        requested_at: new Date(),
-        request_no: `MRR${String(Date.now()).slice(-5)}`,
-      })
-      setSaving(false); onClose()
-    }, 400)
+    try {
+      const saved = await api.createRecordRequest({ ...form, requested_by: form.requested_by.trim() })
+      onSave(withDisplay(saved, patients))
+      onClose()
+    } catch (e) { alert('Could not submit request: ' + e.message) } finally { setSaving(false) }
   }
 
   const ALL_TYPES = RECORD_TYPES.filter(t => t !== 'All')
@@ -140,14 +144,29 @@ export default function MedicalRecords() {
 
   useEffect(() => {
     setLoading(true)
-    api.getPatients().then(setPatients).catch(() => {}).finally(() => setLoading(false))
+    Promise.all([api.getPatients(), api.getRecordRequests()])
+      .then(([pts, reqs]) => { setPatients(pts); setRequests(reqs.map(r => withDisplay(r, pts))) })
+      .catch(e => alert('Could not load records: ' + e.message))
+      .finally(() => setLoading(false))
   }, [])
 
   const addRequest = (req) => setRequests(prev => [req, ...prev])
 
-  const updateRequestStatus = (id, status) => {
+  const updateRequestStatus = async (id, status) => {
     setUpdatingId(id)
-    setTimeout(() => { setRequests(prev => prev.map(r => r.id === id ? { ...r, status } : r)); setUpdatingId(null) }, 300)
+    try {
+      const saved = await api.updateRecordRequest(id, { status })
+      setRequests(prev => prev.map(r => r.id === id ? { ...r, status: saved.status } : r))
+    } catch (e) { alert('Update failed: ' + e.message) } finally { setUpdatingId(null) }
+  }
+
+  const deleteRequest = async (r) => {
+    if (!window.confirm(`Delete request ${r.request_no}? This cannot be undone.`)) return
+    setUpdatingId(r.id)
+    try {
+      await api.deleteRecordRequest(r.id)
+      setRequests(prev => prev.filter(x => x.id !== r.id))
+    } catch (e) { alert('Delete failed: ' + e.message) } finally { setUpdatingId(null) }
   }
 
   const filteredPatients = patients.filter(p =>
@@ -328,6 +347,7 @@ export default function MedicalRecords() {
                       {r.status === 'approved' && (
                         <button className="btn btn-primary btn-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', background: '#059669', borderColor: '#059669' }} disabled={updatingId === r.id} onClick={() => updateRequestStatus(r.id, 'ready')}>Mark Ready</button>
                       )}
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Delete request" style={{ color: '#dc2626' }} disabled={updatingId === r.id} onClick={() => deleteRequest(r)}><Trash2 size={13} /></button>
                     </div>
                   </td>
                 </tr>

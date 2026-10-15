@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { BASE_URL, SERVER_URL } from '../api'
+import { api, BASE_URL, SERVER_URL } from '../api'
+import { analyzeTemplate, loadPdfjs } from '../utils/formLayout'
+import TemplateEditModal from '../components/TemplateEditModal'
 import {
   Upload, Search, Trash2, FileText, Plus, Tag, Eye, X,
-  CheckCircle, AlertCircle, Loader, FolderOpen
+  CheckCircle, AlertCircle, Loader, FolderOpen, Pencil
 } from 'lucide-react'
 
 const CATEGORIES = ['General', 'Consent', 'Assessment', 'Discharge', 'Nursing', 'ICU', 'OT', 'Emergency']
@@ -19,130 +21,215 @@ const CATEGORY_COLORS = {
   Emergency: { bg: 'rgba(239,68,68,0.15)', color: '#dc2626' },
 }
 
+const fileKey = (name, size) => `${name}|${size}`
+
+const STATUS_TEXT = {
+  ready: { color: 'var(--gray-400)' },
+  uploading: { color: 'var(--primary-500)' },
+  done: { color: '#059669' },
+  duplicate: { color: '#b45309' },
+  error: { color: '#dc2626' },
+}
+
 function UploadModal({ onClose, onUploaded, token }) {
-  const [form, setForm] = useState({ name: '', description: '', category: 'General' })
-  const [file, setFile] = useState(null)
+  const [items, setItems] = useState([]) // { id, file, name, category, status, message }
+  const [description, setDescription] = useState('')
+  const [existing, setExisting] = useState(new Map()) // file_name|file_size -> template name
   const [uploading, setUploading] = useState(false)
+  const [finished, setFinished] = useState(false)
   const [error, setError] = useState(null)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef()
+  const nextId = useRef(0)
 
-  const h = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  // Load every template once so files that were already uploaded get flagged as soon as they're picked.
+  // The server makes the final call by comparing file contents.
+  useEffect(() => {
+    api.getFormTemplates()
+      .then(list => setExisting(new Map(list.map(t => [fileKey(t.file_name, t.file_size), t.name]))))
+      .catch(() => {})
+  }, [])
 
-  const handleFile = (f) => {
-    if (!f) return
-    if (f.type !== 'application/pdf') { setError('Only PDF files are supported.'); return }
-    if (f.size > 50 * 1024 * 1024) { setError('File must be under 50MB.'); return }
-    setFile(f)
-    if (!form.name) setForm(prev => ({ ...prev, name: f.name.replace('.pdf', '') }))
-    setError(null)
+  const update = (id, patch) => setItems(prev => prev.map(it => it.id === id ? { ...it, ...patch } : it))
+  const remove = (id) => setItems(prev => prev.filter(it => it.id !== id))
+
+  const handleFiles = (fileList) => {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    const rejected = []
+    const added = []
+    const seen = new Set(items.map(it => fileKey(it.file.name, it.file.size)))
+    for (const f of files) {
+      if (f.type !== 'application/pdf') { rejected.push(`${f.name}: only PDF files are supported`); continue }
+      if (f.size > 50 * 1024 * 1024) { rejected.push(`${f.name}: must be under 50MB`); continue }
+      const key = fileKey(f.name, f.size)
+      if (seen.has(key)) continue // same file picked twice in this batch
+      seen.add(key)
+      const prior = existing.get(key)
+      added.push({
+        id: nextId.current++, file: f, name: f.name.replace(/\.pdf$/i, ''), category: 'General',
+        status: prior ? 'duplicate' : 'ready',
+        message: prior ? `Already uploaded as "${prior}"` : null,
+      })
+    }
+    setItems(prev => [...prev, ...added])
+    setError(rejected.length ? rejected.join(' · ') : null)
+    setFinished(false)
   }
 
   const handleDrop = (e) => {
     e.preventDefault(); setDragOver(false)
-    const f = e.dataTransfer.files[0]
-    if (f) handleFile(f)
+    handleFiles(e.dataTransfer.files)
   }
 
-  const handleSubmit = async () => {
-    if (!file) { setError('Please select a PDF file.'); return }
-    if (!form.name.trim()) { setError('Please enter a form name.'); return }
-    setUploading(true); setError(null)
+  const uploadOne = async (it) => {
+    const fd = new FormData()
+    fd.append('pdf', it.file)
+    fd.append('name', it.name.trim())
+    fd.append('description', description)
+    fd.append('category', it.category)
+    const res = await fetch(`${BASE_URL}/forms/templates`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 409) { update(it.id, { status: 'duplicate', message: data.error }); return false }
+    if (!res.ok) throw new Error(data.error || 'Upload failed')
+    const template = data
+    // Scan the form for blanks and empty header space so patient details and the
+    // hospital logo land in the right places. If this fails, the form viewer scans it
+    // on first open instead — the upload itself has already succeeded.
+    update(it.id, { message: 'Scanning layout...' })
     try {
-      const fd = new FormData()
-      fd.append('pdf', file)
-      fd.append('name', form.name)
-      fd.append('description', form.description)
-      fd.append('category', form.category)
-      const res = await fetch(`${BASE_URL}/forms/templates`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd
+      const pdfjsLib = await loadPdfjs()
+      const pdfDoc = await pdfjsLib.getDocument({ data: await it.file.arrayBuffer() }).promise
+      const layout = await analyzeTemplate(pdfDoc, {
+        onProgress: ({ page, pages }) => update(it.id, { message: `Reading page ${page} of ${pages}...` }),
       })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
-      const template = await res.json()
-      onUploaded(template)
-      onClose()
-    } catch (e) { setError(e.message) } finally { setUploading(false) }
+      const saved = await api.saveFormTemplateLayout(template.id, { layout, page_count: pdfDoc.numPages })
+      template.layout = layout
+      template.page_count = saved.page_count
+      pdfDoc.destroy()
+    } catch (err) {
+      console.warn('[FormTemplates] layout scan failed — will scan on first open', err)
+    }
+    onUploaded(template)
+    update(it.id, { status: 'done', message: 'Uploaded' })
+    return true
+  }
+
+  const pending = items.filter(it => it.status === 'ready' || it.status === 'error')
+  const counts = { duplicate: items.filter(it => it.status === 'duplicate').length }
+
+  const handleSubmit = async () => {
+    if (!pending.length) { setError(items.length ? 'Nothing new to upload.' : 'Please select at least one PDF file.'); return }
+    if (pending.some(it => !it.name.trim())) { setError('Every form needs a name.'); return }
+    setUploading(true); setError(null)
+    let allOk = counts.duplicate === 0
+    for (const it of pending) {
+      update(it.id, { status: 'uploading', message: 'Uploading...' })
+      try { if (!await uploadOne(it)) allOk = false } catch (e) { allOk = false; update(it.id, { status: 'error', message: e.message }) }
+    }
+    setUploading(false)
+    // Close straight away when everything went through; otherwise leave the results on screen
+    if (allOk) onClose()
+    else setFinished(true)
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !uploading && onClose()}>
       <div className="modal modal-lg">
         <div className="modal-header">
           <div>
-            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>Upload Form Template</h4>
-            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>Upload a hospital PDF form to make it available for patients</p>
+            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>Upload Form Templates</h4>
+            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>Upload one or more hospital PDF forms to make them available for patients</p>
           </div>
-          <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
+          <button className="btn btn-ghost btn-icon" onClick={onClose} disabled={uploading}><X size={18} /></button>
         </div>
         <div className="modal-body">
           {error && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(239,68,68,0.08)', color: '#dc2626', padding: '0.75rem 1rem', borderRadius: 'var(--radius-lg)', marginBottom: '1rem', fontSize: '0.875rem' }}>
-              <AlertCircle size={15} />{error}
+              <AlertCircle size={15} style={{ flexShrink: 0 }} />{error}
             </div>
           )}
 
           {/* Drop Zone */}
           <div
-            onClick={() => fileRef.current.click()}
+            onClick={() => !uploading && fileRef.current.click()}
             onDragOver={e => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
+            onDrop={e => uploading ? e.preventDefault() : handleDrop(e)}
             style={{
-              border: `2px dashed ${dragOver ? 'var(--primary-500)' : file ? '#10b981' : 'var(--gray-200)'}`,
+              border: `2px dashed ${dragOver ? 'var(--primary-500)' : 'var(--gray-200)'}`,
               borderRadius: 'var(--radius-xl)',
-              padding: '2.5rem',
+              padding: items.length ? '1.25rem' : '2.5rem',
               textAlign: 'center',
-              cursor: 'pointer',
-              background: dragOver ? 'var(--primary-50)' : file ? 'rgba(16,185,129,0.04)' : 'var(--gray-50)',
+              cursor: uploading ? 'default' : 'pointer',
+              background: dragOver ? 'var(--primary-50)' : 'var(--gray-50)',
               transition: 'all 200ms',
-              marginBottom: '1.5rem',
+              marginBottom: '1.25rem',
             }}
           >
-            <input ref={fileRef} type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
-            {file ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.875rem' }}>
-                <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <CheckCircle size={24} color="#10b981" />
-                </div>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontWeight: 700, color: 'var(--gray-800)', fontSize: '0.9375rem' }}>{file.name}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--gray-400)' }}>{(file.size / 1024).toFixed(1)} KB · PDF</div>
-                </div>
+            <input ref={fileRef} type="file" multiple accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={e => { handleFiles(e.target.files); e.target.value = '' }} />
+            {items.length ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--gray-600)', fontSize: '0.875rem' }}>
+                <Plus size={16} /> Add more PDFs
               </div>
             ) : (
               <div>
                 <div style={{ width: 56, height: 56, borderRadius: 16, background: 'var(--primary-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
                   <Upload size={24} color="var(--primary-500)" />
                 </div>
-                <div style={{ fontWeight: 600, color: 'var(--gray-700)', marginBottom: '0.375rem' }}>Drag & drop your PDF here</div>
-                <div style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>or click to browse · Max 50MB</div>
+                <div style={{ fontWeight: 600, color: 'var(--gray-700)', marginBottom: '0.375rem' }}>Drag & drop your PDFs here</div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>or click to browse · select several at once · Max 50MB each</div>
               </div>
             )}
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-              <label className="form-label">Form Name*</label>
-              <input className="form-input" placeholder="e.g. Patient Consent Form" value={form.name} onChange={e => h('name', e.target.value)} />
+          {items.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.25rem', maxHeight: 360, overflowY: 'auto' }}>
+              {items.map(it => {
+                const locked = uploading || it.status === 'done' || it.status === 'duplicate' || it.status === 'uploading'
+                return (
+                  <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0.75rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--gray-100)', background: it.status === 'duplicate' ? 'rgba(245,158,11,0.06)' : 'transparent' }}>
+                    <div style={{ flexShrink: 0 }}>
+                      {it.status === 'done' ? <CheckCircle size={18} color="#10b981" />
+                        : it.status === 'uploading' ? <Loader size={18} className="spin" color="var(--primary-500)" />
+                        : it.status === 'duplicate' || it.status === 'error' ? <AlertCircle size={18} color={STATUS_TEXT[it.status].color} />
+                        : <FileText size={18} color="var(--gray-400)" />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <input className="form-input" style={{ padding: '0.375rem 0.625rem', fontSize: '0.875rem' }} placeholder="Form name" value={it.name} disabled={locked} onChange={e => update(it.id, { name: e.target.value })} />
+                      <div style={{ fontSize: '0.75rem', marginTop: 4, display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                        <span style={{ color: 'var(--gray-400)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{it.file.name} · {(it.file.size / 1024).toFixed(1)} KB</span>
+                        {it.message && <span style={{ color: STATUS_TEXT[it.status].color, fontWeight: 600 }}>· {it.message}</span>}
+                      </div>
+                    </div>
+                    <select className="form-input form-select" style={{ width: 140, padding: '0.375rem 0.625rem', fontSize: '0.8125rem' }} value={it.category} disabled={locked} onChange={e => update(it.id, { category: e.target.value })}>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                    <button className="btn btn-ghost btn-icon" title="Remove" disabled={uploading || it.status === 'uploading'} onClick={() => remove(it.id)}><X size={15} /></button>
+                  </div>
+                )
+              })}
             </div>
-            <div className="form-group">
-              <label className="form-label">Category</label>
-              <select className="form-input form-select" value={form.category} onChange={e => h('category', e.target.value)}>
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Description</label>
-              <input className="form-input" placeholder="Brief description of the form..." value={form.description} onChange={e => h('description', e.target.value)} />
-            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Description{items.length > 1 ? ' (applied to all)' : ''}</label>
+            <input className="form-input" placeholder="Brief description of the form..." value={description} disabled={uploading} onChange={e => setDescription(e.target.value)} />
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose} disabled={uploading}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={uploading}>
-            {uploading ? <><Loader size={14} className="spin" /> Uploading...</> : <><Upload size={14} /> Upload Form</>}
+          {counts.duplicate > 0 && (
+            <span style={{ marginRight: 'auto', fontSize: '0.8125rem', color: '#b45309' }}>
+              {counts.duplicate} already uploaded — skipped
+            </span>
+          )}
+          <button className="btn btn-secondary" onClick={onClose} disabled={uploading}>{finished ? 'Close' : 'Cancel'}</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={uploading || !pending.length}>
+            {uploading ? <><Loader size={14} className="spin" /> Uploading...</> : <><Upload size={14} /> Upload {pending.length > 1 ? `${pending.length} Forms` : 'Form'}</>}
           </button>
         </div>
       </div>
@@ -151,7 +238,7 @@ function UploadModal({ onClose, onUploaded, token }) {
 }
 
 export default function FormTemplates() {
-  const { token } = useAuth()
+  const { token, isAdmin } = useAuth() // upload / edit / delete are admin-only on the server
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -159,6 +246,12 @@ export default function FormTemplates() {
   const [categoryFilter, setCategoryFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
   const [deleting, setDeleting] = useState(null)
+  const [editing, setEditing] = useState(null)
+
+  const saveEdit = async (data) => {
+    const updated = await api.updateFormTemplate(editing.id, data)
+    setTemplates(prev => prev.map(t => t.id === updated.id ? { ...t, ...updated } : t))
+  }
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true); setError(null)
@@ -185,10 +278,7 @@ export default function FormTemplates() {
     if (!window.confirm('Delete this form template? All patient form instances will also be deleted.')) return
     setDeleting(id)
     try {
-      await fetch(`${BASE_URL}/forms/templates/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.deleteFormTemplate(id)
       setTemplates(t => t.filter(x => x.id !== id))
     } catch (e) { alert('Delete failed: ' + e.message) } finally { setDeleting(null) }
   }
@@ -201,9 +291,11 @@ export default function FormTemplates() {
           <h1 className="page-title">Form Templates</h1>
           <p className="page-subtitle">Upload and manage hospital PDF forms for patient use</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-          <Upload size={15} /> Upload Form
-        </button>
+        {isAdmin && (
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <Upload size={15} /> Upload Form
+          </button>
+        )}
       </div>
 
       {/* Stats */}
@@ -246,7 +338,7 @@ export default function FormTemplates() {
           </div>
           <div style={{ fontWeight: 700, fontSize: '1.0625rem', color: 'var(--gray-700)', marginBottom: '0.5rem' }}>No forms yet</div>
           <div style={{ fontSize: '0.875rem', color: 'var(--gray-400)', marginBottom: '1.5rem' }}>Upload your first hospital form template to get started</div>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}><Upload size={15} /> Upload Form</button>
+          {isAdmin && <button className="btn btn-primary" onClick={() => setShowModal(true)}><Upload size={15} /> Upload Form</button>}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
@@ -288,14 +380,26 @@ export default function FormTemplates() {
                 >
                   <Eye size={13} /> Preview
                 </a>
-                <button
-                  className="btn btn-danger btn-sm"
-                  style={{ padding: '0.375rem 0.75rem' }}
-                  onClick={() => handleDelete(t.id)}
-                  disabled={deleting === t.id}
-                >
-                  {deleting === t.id ? <Loader size={12} className="spin" /> : <Trash2 size={13} />}
-                </button>
+                {isAdmin && (
+                  <>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ padding: '0.375rem 0.75rem' }}
+                      title="Edit name / category"
+                      onClick={() => setEditing(t)}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      style={{ padding: '0.375rem 0.75rem' }}
+                      onClick={() => handleDelete(t.id)}
+                      disabled={deleting === t.id}
+                    >
+                      {deleting === t.id ? <Loader size={12} className="spin" /> : <Trash2 size={13} />}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -304,6 +408,7 @@ export default function FormTemplates() {
 
     </div>
     {showModal && <UploadModal onClose={() => setShowModal(false)} onUploaded={t => setTemplates(prev => [t, ...prev])} token={token} />}
+    {editing && <TemplateEditModal template={editing} category={editing.category} categories={CATEGORIES} onClose={() => setEditing(null)} onSave={saveEdit} />}
     </>
   )
 }

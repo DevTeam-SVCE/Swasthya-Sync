@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, Clock, X, Loader } from 'lucide-react'
+import { Search, Plus, Clock, X, Loader, Pencil, Trash2 } from 'lucide-react'
+import EditVisitModal from '../components/EditVisitModal'
 import { api } from '../api'
 
 const STATUS = {
@@ -120,6 +121,15 @@ export default function OPD() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
+  const [editing, setEditing] = useState(null)
+
+  const handleDelete = async (visit) => {
+    if (!window.confirm(`Delete the visit for ${visit.patient_name} (token ${visit.token})?`)) return
+    try {
+      await api.deleteOPD(visit.id)
+      setVisits(v => v.filter(x => x.id !== visit.id))
+    } catch (e) { alert('Delete failed: ' + e.message) }
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
@@ -310,6 +320,12 @@ export default function OPD() {
                           {a.status === 'scheduled' ? 'Check In' : a.status === 'checked-in' ? 'Start' : 'Complete'}
                         </button>
                       )}
+                      {a.status !== 'completed' && (
+                        <>
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Edit / reschedule" onClick={() => setEditing(a)}><Pencil size={12} /></button>
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Delete visit" style={{ color: '#dc2626' }} onClick={() => handleDelete(a)}><Trash2 size={12} /></button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -324,6 +340,8 @@ export default function OPD() {
 
     </div>
     {showModal && <BookModal onClose={() => setShowModal(false)} onSave={handleSave} doctors={doctors} />}
+    {editing && <EditVisitModal visit={editing} doctors={doctors} onClose={() => setEditing(null)}
+      onSaved={u => setVisits(v => v.map(x => x.id === u.id ? u : x))} />}
     </>
   )
 }

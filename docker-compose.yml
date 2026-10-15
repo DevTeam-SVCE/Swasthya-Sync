@@ -4,15 +4,16 @@ services:
   app:
     build: .
     ports:
-      - "5000:5000"
+      - "5001:5001"
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=dscribe_hms
       - DB_USER=postgres
-      - DB_PASSWORD=root_password
-      - JWT_SECRET=change_this_to_a_secure_random_string_in_production
+      - DB_PASSWORD=svce@2001
+      - JWT_SECRET=18d1be13902d55f06ededf75d65a722feb8c57b41bf7b39b89237dfb5cde9ef7
       - NODE_ENV=production
+      - PORT=5001
     depends_on:
       - postgres
     volumes:
@@ -24,7 +25,7 @@ services:
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=root_password
+      - POSTGRES_PASSWORD=svce@2001
       - POSTGRES_DB=dscribe_hms
     ports:
       # Changed host port to 5433 to prevent "address already in use" errors if a local postgres is already running

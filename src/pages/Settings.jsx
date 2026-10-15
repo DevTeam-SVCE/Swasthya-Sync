@@ -26,7 +26,7 @@ export default function Settings() {
   useEffect(() => {
     setLoadingHospital(true)
     api.getHospital()
-      .then(h => setHospital(h))
+      .then(h => { setHospital(h); setMisc(m => ({ ...m, ...(h.settings || {}) })) })
       .catch(e => console.error('Could not load hospital:', e.message))
       .finally(() => setLoadingHospital(false))
   }, [])
@@ -61,7 +61,7 @@ export default function Settings() {
     }
   }
 
-  // ── Misc settings state (client-side only) ──────────────────
+  // ── Preferences (stored in hospitals.settings) ──────────────
   const [misc, setMisc] = useState({
     emailNotif: true, smsNotif: true, criticalAlerts: true,
     pendingNoteAlerts: true, labResultAlerts: true,
@@ -71,6 +71,34 @@ export default function Settings() {
   })
   const hm = (k, v) => setMisc(f => ({ ...f, [k]: v }))
   const toggle = k => setMisc(f => ({ ...f, [k]: !f[k] }))
+
+  const handleSavePreferences = async () => {
+    setSaving(true); setSaveStatus(null); setSaveError(null)
+    try {
+      const updated = await api.updateHospital({ settings: misc })
+      setHospital(h => ({ ...h, settings: updated.settings }))
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus(null), 3000)
+    } catch (e) {
+      setSaveStatus(null)
+      alert('Could not save preferences: ' + e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleBrandingRemove = async (type) => {
+    if (!window.confirm(`Remove the ${type} image?`)) return
+    try {
+      const updated = await api.deleteHospitalBranding(type)
+      setHospital(prev => ({
+        ...prev,
+        report_logo: updated.report_logo,
+        report_header_image: updated.report_header_image,
+        report_footer_image: updated.report_footer_image,
+      }))
+    } catch (e) { setLogoError(e.message) }
+  }
 
   // ── Branding upload ────────────────────────────────────────────
   const logoInputRef = useRef()
@@ -113,6 +141,7 @@ export default function Settings() {
   }
 
   const isHospitalSection = activeSection === 'Hospital Profile' || activeSection === 'Lab Report Branding'
+  const isPreferenceSection = ['Notifications', 'Security', 'Appearance', 'Data & Backup'].includes(activeSection)
 
   return (
     <div className="animate-fadeInUp">
@@ -121,8 +150,8 @@ export default function Settings() {
           <h1 className="page-title">Settings</h1>
           <p className="page-subtitle">Configure hospital profile, system preferences, and security</p>
         </div>
-        {isHospitalSection && (
-          <button className="btn btn-primary" onClick={handleSaveHospital} disabled={saving || loadingHospital}>
+        {(isHospitalSection || isPreferenceSection) && (
+          <button className="btn btn-primary" onClick={isHospitalSection ? handleSaveHospital : handleSavePreferences} disabled={saving || loadingHospital}>
             {saving ? <Loader size={15} className="spin" /> : saveStatus === 'saved' ? <CheckCircle size={15} /> : <Save size={15} />}
             {saving ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save Changes'}
           </button>
@@ -326,6 +355,9 @@ export default function Settings() {
                                 {uploadingLogo ? <Loader size={13} className="spin" /> : <UploadCloud size={13} />}
                                 {uploadingLogo ? 'Uploading...' : hospital.report_logo ? 'Change Logo' : 'Upload Logo'}
                               </button>
+                              {hospital.report_logo && (
+                                <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626', marginLeft: '0.5rem', marginBottom: '0.5rem' }} onClick={() => handleBrandingRemove('logo')}>Remove</button>
+                              )}
                               <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}>PNG, JPG, or WEBP · Max 5 MB</div>
                               <div style={{ fontSize: '0.7rem', color: 'var(--gray-400)', marginTop: '0.125rem' }}>Recommended: 300×100 px, transparent background</div>
                               {logoError && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.375rem' }}>⚠ {logoError}</div>}
@@ -401,6 +433,9 @@ export default function Settings() {
                               {uploadingHeader ? <Loader size={13} className="spin" /> : <UploadCloud size={13} />}
                               {uploadingHeader ? 'Uploading...' : hospital.report_header_image ? 'Change Header Image' : 'Upload Header Image'}
                             </button>
+                            {hospital.report_header_image && (
+                              <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626', marginLeft: '0.5rem' }} onClick={() => handleBrandingRemove('header')}>Remove</button>
+                            )}
                             {logoError && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.375rem' }}>⚠ {logoError}</div>}
                           </div>
 
@@ -427,6 +462,9 @@ export default function Settings() {
                               {uploadingFooter ? <Loader size={13} className="spin" /> : <UploadCloud size={13} />}
                               {uploadingFooter ? 'Uploading...' : hospital.report_footer_image ? 'Change Footer Image' : 'Upload Footer Image'}
                             </button>
+                            {hospital.report_footer_image && (
+                              <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626', marginLeft: '0.5rem' }} onClick={() => handleBrandingRemove('footer')}>Remove</button>
+                            )}
                           </div>
                         </div>
                       </>
@@ -548,10 +586,10 @@ export default function Settings() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: 'var(--gray-50)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--gray-100)' }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--gray-800)' }}>Two-Factor Authentication</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>Require 2FA for all admin logins</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>Not available yet — logins currently use password only</div>
                     </div>
-                    <div onClick={() => toggle('twoFactor')} style={{ width: 44, height: 24, borderRadius: 12, background: misc.twoFactor ? 'var(--primary-500)' : 'var(--gray-300)', cursor: 'pointer', position: 'relative', transition: 'all 200ms', flexShrink: 0 }}>
-                      <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: misc.twoFactor ? 23 : 3, transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                    <div title="Two-factor login is not implemented yet" style={{ width: 44, height: 24, borderRadius: 12, background: 'var(--gray-200)', cursor: 'not-allowed', position: 'relative', flexShrink: 0, opacity: 0.6 }}>
+                      <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: 3, boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
                     </div>
                   </div>
                   <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>

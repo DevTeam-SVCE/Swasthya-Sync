@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, FileText, Clock, CheckCircle, X, Save, Eye, Loader, Download } from 'lucide-react'
+import { Search, Plus, FileText, Clock, CheckCircle, X, Save, Eye, Loader, Download, Pencil, Trash2 } from 'lucide-react'
 import { api, SERVER_URL } from '../api'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -13,8 +13,11 @@ const PRIORITY_STYLES = {
 
 const NOTE_TYPES = ['Progress Note', 'Discharge Summary', 'Consultation Note', 'Post-Op Note', 'Nursing Note', 'ICU Note', 'Obstetric Note']
 
-function NewNoteModal({ onClose, onSave, doctors, patients }) {
-  const [form, setForm] = useState({ patient_id: '', doctor_id: '', note_type: 'Progress Note', priority: 'medium', content: '' })
+// New note, or edit an existing one when `note` is given (patient stays fixed)
+function NewNoteModal({ note, onClose, onSave, doctors, patients }) {
+  const [form, setForm] = useState(note
+    ? { patient_id: note.patient_id, doctor_id: note.doctor_id || '', note_type: note.note_type || 'Progress Note', priority: note.priority || 'medium', content: note.content || '' }
+    : { patient_id: '', doctor_id: '', note_type: 'Progress Note', priority: 'medium', content: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const h = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -26,8 +29,14 @@ function NewNoteModal({ onClose, onSave, doctors, patients }) {
     }
     setSaving(true); setError(null)
     try {
-      const note = await api.createNote(form)
-      onSave(note); onClose()
+      if (note) {
+        const { patient_id, ...changes } = form
+        const updated = await api.updateNote(note.id, changes)
+        onSave({ ...note, ...updated, doctor_name: doctors.find(d => d.id === updated.doctor_id)?.name ?? note.doctor_name })
+      } else {
+        onSave(await api.createNote(form))
+      }
+      onClose()
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
@@ -36,8 +45,8 @@ function NewNoteModal({ onClose, onSave, doctors, patients }) {
       <div className="modal modal-lg">
         <div className="modal-header">
           <div>
-            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>New Clinical Note</h4>
-            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>Document and digitize a clinical note</p>
+            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>{note ? `Edit Note #${note.id}` : 'New Clinical Note'}</h4>
+            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>{note ? `${note.patient_name || note.patient_id} · changes are recorded in the audit log` : 'Document and digitize a clinical note'}</p>
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
@@ -50,7 +59,7 @@ function NewNoteModal({ onClose, onSave, doctors, patients }) {
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.25rem' }}>
             <div className="form-group">
               <label className="form-label">Patient*</label>
-              <select className="form-input form-select" value={form.patient_id} onChange={e => h('patient_id', e.target.value)}>
+              <select className="form-input form-select" value={form.patient_id} disabled={!!note} onChange={e => h('patient_id', e.target.value)}>
                 <option value="">Select patient</option>
                 {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
               </select>
@@ -96,7 +105,7 @@ function NewNoteModal({ onClose, onSave, doctors, patients }) {
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
-            {saving ? <Loader size={14} className="spin" /> : <CheckCircle size={14} />} Digitize Note
+            {saving ? <Loader size={14} className="spin" /> : note ? <Save size={14} /> : <CheckCircle size={14} />} {note ? 'Save Changes' : 'Digitize Note'}
           </button>
         </div>
       </div>
@@ -170,7 +179,16 @@ export default function ClinicalNotes() {
     }).catch(() => {})
   }, [])
 
-  const handleSave = (note) => setNotes(n => [note, ...n])
+  const [editingNote, setEditingNote] = useState(null)
+  const handleSave = (note) => setNotes(n => n.some(x => x.id === note.id) ? n.map(x => x.id === note.id ? note : x) : [note, ...n])
+
+  const handleDelete = async (note) => {
+    if (!window.confirm(`Delete note #${note.id} (${note.note_type}) for ${note.patient_name}? This cannot be undone.`)) return
+    try {
+      await api.deleteNote(note.id)
+      setNotes(n => n.filter(x => x.id !== note.id))
+    } catch (e) { alert('Failed to delete: ' + e.message) }
+  }
 
   const handleDigitize = async (id) => {
     try {
@@ -590,6 +608,8 @@ export default function ClinicalNotes() {
                         <CheckCircle size={12} /> Digitize
                       </button>
                     )}
+                    <button className="btn btn-ghost btn-sm btn-icon" title="Edit note" onClick={() => setEditingNote(note)}><Pencil size={13} /></button>
+                    <button className="btn btn-ghost btn-sm btn-icon" title="Delete note" style={{ color: '#dc2626' }} onClick={() => handleDelete(note)}><Trash2 size={13} /></button>
                   </div>
                 </div>
               </div>
@@ -599,6 +619,7 @@ export default function ClinicalNotes() {
       )}
 
       {showModal && <NewNoteModal onClose={() => setShowModal(false)} onSave={handleSave} doctors={doctors} patients={patients} />}
+      {editingNote && <NewNoteModal note={editingNote} onClose={() => setEditingNote(null)} onSave={handleSave} doctors={doctors} patients={patients} />}
     </div>
   )
 }

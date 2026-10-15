@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, AlertTriangle, X, Loader, Pill, PackagePlus, Users, Calculator, CheckSquare } from 'lucide-react'
+import { Search, Plus, AlertTriangle, X, Loader, Pill, PackagePlus, Users, Calculator, CheckSquare, Pencil, Trash2, Undo2, Save } from 'lucide-react'
 import { api } from '../api'
+import StockItemModal from '../components/StockItemModal'
 
 const STATUS_STYLES = {
   'In Stock': { bg: 'rgba(16,185,129,0.1)', color: '#059669', label: 'In Stock' },
@@ -74,27 +75,35 @@ function AddDrugModal({ onClose, onSave }) {
   )
 }
 
-function NewGrnModal({ inventory, onClose }) {
+function NewGrnModal({ inventory, suppliers, onClose, onSaved }) {
   const [supplier, setSupplier] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [items, setItems] = useState([{ drugId: '', batch: '', expiry: '', qty: '', ptr: '', mrp: '' }])
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
 
   const addItem = () => setItems(i => [...i, { drugId: '', batch: '', expiry: '', qty: '', ptr: '', mrp: '' }])
-  
+  const removeItem = (index) => setItems(i => i.length > 1 ? i.filter((_, n) => n !== index) : i)
+
   const updateItem = (index, field, val) => {
-    const newItems = [...items]
-    newItems[index][field] = val
-    setItems(newItems)
+    setItems(prev => prev.map((it, n) => n === index ? { ...it, [field]: val } : it))
   }
 
-  const handleSave = () => {
-    setSaving(true)
-    setTimeout(() => {
-      alert('GRN Processed Successfully. Stock Updated!')
-      setSaving(false)
+  const validLines = items.filter(i => i.drugId && parseInt(i.qty) > 0)
+  const total = validLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (Number(i.ptr) || 0), 0)
+
+  // Saves the GRN and adds the received quantities to stock in one transaction
+  const handleSave = async () => {
+    if (!validLines.length) { setError('Add at least one line with a drug and quantity'); return }
+    setSaving(true); setError(null)
+    try {
+      const grn = await api.createGRN({
+        supplier_name: supplier.trim(), invoice_no: invoiceNo.trim(),
+        items: validLines.map(i => ({ drug_id: i.drugId, batch: i.batch, expiry: i.expiry, qty: i.qty, ptr: i.ptr, mrp: i.mrp })),
+      })
+      onSaved(grn)
       onClose()
-    }, 1000)
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
   return (
@@ -108,15 +117,14 @@ function NewGrnModal({ inventory, onClose }) {
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="modal-body">
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', color: '#dc2626', padding: '0.625rem 0.875rem', borderRadius: 'var(--radius-lg)', marginBottom: '1rem', fontSize: '0.85rem' }}>{error}</div>}
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', padding: '1.25rem', background: 'var(--gray-50)', borderRadius: 'var(--radius-lg)' }}>
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Supplier/Vendor*</label>
-              <select className="form-input form-select" value={supplier} onChange={e => setSupplier(e.target.value)}>
-                <option value="">Select Supplier</option>
-                <option>Apollo Distributors</option>
-                <option>Cipla Direct Wholesale</option>
-                <option>SunPharma Depot</option>
-              </select>
+              <input className="form-input" list="grn-suppliers" placeholder="Select or type supplier" value={supplier} onChange={e => setSupplier(e.target.value)} />
+              <datalist id="grn-suppliers">
+                {suppliers.map(s => <option key={s.id} value={s.name} />)}
+              </datalist>
             </div>
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Supplier Invoice No*</label>
@@ -139,6 +147,7 @@ function NewGrnModal({ inventory, onClose }) {
                   <th>Qty Recv</th>
                   <th>Purchase Rate (PTR)</th>
                   <th>MRP (Rs)</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -155,6 +164,9 @@ function NewGrnModal({ inventory, onClose }) {
                     <td style={{ padding: '0.5rem' }}><input className="form-input" type="number" style={{ fontSize: '0.8rem', padding: '0.4rem' }} placeholder="Qty" value={item.qty} onChange={e => updateItem(idx, 'qty', e.target.value)} /></td>
                     <td style={{ padding: '0.5rem' }}><input className="form-input" type="number" style={{ fontSize: '0.8rem', padding: '0.4rem' }} placeholder="PTR" value={item.ptr} onChange={e => updateItem(idx, 'ptr', e.target.value)} /></td>
                     <td style={{ padding: '0.5rem' }}><input className="form-input" type="number" style={{ fontSize: '0.8rem', padding: '0.4rem' }} placeholder="MRP" value={item.mrp} onChange={e => updateItem(idx, 'mrp', e.target.value)} /></td>
+                    <td style={{ padding: '0.5rem' }}>
+                      <button className="btn btn-ghost btn-icon btn-sm" onClick={() => removeItem(idx)} disabled={items.length === 1} title="Remove line"><X size={14} /></button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -163,9 +175,12 @@ function NewGrnModal({ inventory, onClose }) {
           
         </div>
         <div className="modal-footer" style={{ borderTop: 'none', background: 'var(--gray-50)', marginTop: 0 }}>
-          <div style={{ flex: 1, color: 'var(--gray-500)', fontSize: '0.85rem' }}>Total lines: {items.length}</div>
+          <div style={{ flex: 1, color: 'var(--gray-500)', fontSize: '0.85rem' }}>
+            Lines: {validLines.length} · Purchase value: <strong>Rs {total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+            <div style={{ fontSize: '0.72rem' }}>MRP and expiry, when entered, update the drug's selling price and expiry.</div>
+          </div>
           <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !supplier || !invoiceNo}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !supplier.trim() || !invoiceNo.trim()}>
             {saving ? <Loader size={14} className="spin" /> : <CheckSquare size={14} />} Process GRN & Verify
           </button>
         </div>
@@ -187,6 +202,9 @@ export default function Pharmacy() {
   const [posPatient, setPosPatient] = useState({ name: '', id: '', type: 'Walk-In' })
   const [posSearching, setPosSearching] = useState('')
   const [posResults, setPosResults] = useState([])
+  const [editingItem, setEditingItem] = useState(null)
+  const [grns, setGrns] = useState([])
+  const [suppliers, setSuppliers] = useState([])
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
@@ -205,6 +223,21 @@ export default function Pharmacy() {
   }, [fetchData])
 
   const handleSave = (drug) => setInventory(inv => [drug, ...inv])
+
+  const loadGrns = useCallback(() => api.getGRNs().then(setGrns).catch(e => setError(e.message)), [])
+  const loadSuppliers = useCallback(() => api.getSuppliers().then(setSuppliers).catch(() => {}), [])
+  useEffect(() => {
+    if (activeTab === 'grn') { loadGrns(); loadSuppliers() }
+    if (activeTab === 'suppliers') loadSuppliers()
+  }, [activeTab, loadGrns, loadSuppliers])
+
+  const deleteItem = async (item) => {
+    if (!window.confirm(`Delete "${item.name}" from inventory? This cannot be undone.`)) return
+    try {
+      await api.deletePharmacy(item.id)
+      setInventory(inv => inv.filter(i => i.id !== item.id))
+    } catch (e) { alert('Delete failed: ' + e.message) }
+  }
 
   const lowStock = inventory.filter(i => i.status === 'Low Stock' || i.status === 'Out of Stock').length
   const activePrescriptions = inventory.filter(i => i.status === 'In Stock').length
@@ -400,15 +433,15 @@ export default function Pharmacy() {
         <div className="table-wrapper" style={{ border: 'none', borderRadius: 0 }}>
           <table className="data-table">
             <thead>
-              <tr><th>Drug Name</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit</th><th>Price (Rs)</th><th>Expiry</th><th>Status</th></tr>
+              <tr><th>Drug Name</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit</th><th>Price (Rs)</th><th>Expiry</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-400)' }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-400)' }}>
                   <Loader size={20} className="spin" style={{ display: 'inline-block' }} />
                 </td></tr>
               ) : inventory.length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-400)' }}>No drugs found in inventory</td></tr>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-400)' }}>No drugs found in inventory</td></tr>
               ) : inventory.map((item) => (
                 <tr key={item.id}>
                   <td>
@@ -439,6 +472,12 @@ export default function Pharmacy() {
                       {STATUS_STYLES[item.status]?.label || item.status}
                     </span>
                   </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Edit / adjust stock" onClick={() => setEditingItem(item)}><Pencil size={13} /></button>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Delete" style={{ color: '#dc2626' }} onClick={() => deleteItem(item)}><Trash2 size={13} /></button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -457,39 +496,193 @@ export default function Pharmacy() {
                 <tr><th>GRN Id</th><th>Date</th><th>Supplier</th><th>Inv No.</th><th>Status</th><th>Value (Rs)</th></tr>
               </thead>
               <tbody>
-                <tr>
-                  <td><span style={{ fontWeight: 700, color: 'var(--primary-600)', fontFamily: 'monospace' }}>GRN-1011</span></td>
-                  <td>Today</td>
-                  <td style={{ fontWeight: 600 }}>Apollo Distributors</td>
-                  <td>INV-10928</td>
-                  <td><span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.75rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 999 }}>Verified</span></td>
-                  <td style={{ fontWeight: 700 }}>45,200.00</td>
-                </tr>
-                <tr>
-                  <td><span style={{ fontWeight: 700, color: 'var(--primary-600)', fontFamily: 'monospace' }}>GRN-1010</span></td>
-                  <td>18 Apr 2026</td>
-                  <td style={{ fontWeight: 600 }}>SunPharma Depot</td>
-                  <td>SP-9921</td>
-                  <td><span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.75rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 999 }}>Verified</span></td>
-                  <td style={{ fontWeight: 700 }}>12,850.00</td>
-                </tr>
+                {grns.length === 0 && (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--gray-400)' }}>No goods received yet. Use "Receive Goods (GRN)" to record a supplier delivery.</td></tr>
+                )}
+                {grns.map(g => (
+                  <tr key={g.id}>
+                    <td>
+                      <span style={{ fontWeight: 700, color: 'var(--primary-600)', fontFamily: 'monospace' }}>GRN-{g.id}</span>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: 2 }}>
+                        {(g.items || []).map(i => `${i.drug_name} ×${i.qty}`).join(', ')}
+                      </div>
+                    </td>
+                    <td>{new Date(g.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td style={{ fontWeight: 600 }}>{g.supplier_name}</td>
+                    <td>{g.invoice_no}</td>
+                    <td><span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.75rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 999 }}>{g.status}</span></td>
+                    <td style={{ fontWeight: 700 }}>{Number(g.total_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
+      {activeTab === 'ip-returns' && <ReturnsTab inventory={inventory} onStockChanged={fetchData} />}
+
       {/* Suppliers / Vendors View */}
-      {activeTab === 'suppliers' && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '4rem', color: 'var(--gray-400)', background: '#fff', borderRadius: 'var(--radius-xl)', border: '1px solid var(--gray-200)' }}>
-          <Users size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
-          <h3 style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--gray-600)' }}>Supplier Directory</h3>
-          <p>Database of pharmaceutical vendors, reps, and direct manufacturers.</p>
-        </div>
-      )}
+      {activeTab === 'suppliers' && <SuppliersTab suppliers={suppliers} reload={loadSuppliers} />}
 
       {showModal && <AddDrugModal onClose={() => setShowModal(false)} onSave={handleSave} />}
-      {showGrnModal && <NewGrnModal inventory={inventory} onClose={() => setShowGrnModal(false)} />}
+      {showGrnModal && <NewGrnModal inventory={inventory} suppliers={suppliers} onClose={() => setShowGrnModal(false)} onSaved={() => { loadGrns(); fetchData() }} />}
+      {editingItem && <StockItemModal item={editingItem} onClose={() => setEditingItem(null)} onSaved={u => setInventory(inv => inv.map(i => i.id === u.id ? u : i))} />}
+    </div>
+  )
+}
+
+// ─── IP medicine returns: unused medicines returned from the ward go back into stock ──
+function ReturnsTab({ inventory, onStockChanged }) {
+  const [returns, setReturns] = useState([])
+  const [patients, setPatients] = useState([])
+  const [form, setForm] = useState({ patient_id: '', drug_id: '', qty: '', reason: '' })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const load = useCallback(() => api.getPharmacyReturns().then(setReturns).catch(() => {}), [])
+  useEffect(() => {
+    load()
+    api.getBeds().then(beds => setPatients(beds.filter(b => b.status === 'occupied' && b.patient_id))).catch(() => {})
+  }, [load])
+
+  const drug = inventory.find(d => String(d.id) === String(form.drug_id))
+  const submit = async () => {
+    if (!form.patient_id || !form.drug_id || !(parseInt(form.qty) > 0)) { alert('Select patient, medicine and quantity'); return }
+    setSaving(true)
+    try {
+      await api.createPharmacyReturn(form)
+      setForm({ patient_id: '', drug_id: '', qty: '', reason: '' })
+      load(); onStockChanged()
+    } catch (e) { alert('Return failed: ' + e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="grid" style={{ gridTemplateColumns: '340px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+      <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+        <h5 style={{ fontWeight: 800 }}>Record Return</h5>
+        <div className="form-group">
+          <label className="form-label">Inpatient *</label>
+          <select className="form-input form-select" value={form.patient_id} onChange={e => set('patient_id', e.target.value)}>
+            <option value="">Select patient…</option>
+            {patients.map(b => <option key={b.id} value={b.patient_id}>{b.patient_name} ({b.patient_id}) · {b.ward}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Medicine *</label>
+          <select className="form-input form-select" value={form.drug_id} onChange={e => set('drug_id', e.target.value)}>
+            <option value="">Select medicine…</option>
+            {inventory.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Quantity returned *</label>
+          <input className="form-input" type="number" min="1" value={form.qty} onChange={e => set('qty', e.target.value)} />
+          {drug && parseInt(form.qty) > 0 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginTop: 4 }}>Refund value: Rs {(parseInt(form.qty) * Number(drug.price || 0)).toFixed(2)}</div>
+          )}
+        </div>
+        <div className="form-group">
+          <label className="form-label">Reason</label>
+          <input className="form-input" placeholder="e.g. Discontinued, discharged" value={form.reason} onChange={e => set('reason', e.target.value)} />
+        </div>
+        <button className="btn btn-primary" onClick={submit} disabled={saving} style={{ justifyContent: 'center' }}>
+          {saving ? <Loader size={14} className="spin" /> : <Undo2 size={14} />} Return to Stock
+        </button>
+      </div>
+      <div className="card">
+        <div className="table-wrapper" style={{ border: 'none', borderRadius: 0 }}>
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Patient</th><th>Medicine</th><th>Qty</th><th>Refund (Rs)</th><th>Reason</th><th>By</th></tr></thead>
+            <tbody>
+              {returns.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--gray-400)' }}>No returns recorded</td></tr>}
+              {returns.map(r => (
+                <tr key={r.id}>
+                  <td style={{ fontSize: '0.8rem' }}>{new Date(r.created_at).toLocaleDateString('en-IN')}</td>
+                  <td><div style={{ fontWeight: 600 }}>{r.patient_name}</div><div style={{ fontSize: '0.72rem', color: 'var(--gray-400)' }}>{r.patient_id}</div></td>
+                  <td>{r.drug_name}</td>
+                  <td style={{ fontWeight: 700 }}>{r.qty}</td>
+                  <td>{Number(r.refund_amount).toFixed(2)}</td>
+                  <td style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{r.reason || '—'}</td>
+                  <td style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{r.created_by || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Supplier directory ──
+const EMPTY_SUPPLIER = { name: '', contact_person: '', phone: '', email: '', gstin: '', address: '' }
+
+function SuppliersTab({ suppliers, reload }) {
+  const [form, setForm] = useState(EMPTY_SUPPLIER)
+  const [editingId, setEditingId] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    if (!form.name.trim()) { alert('Supplier name is required'); return }
+    setSaving(true)
+    try {
+      if (editingId) await api.updateSupplier(editingId, form)
+      else await api.createSupplier(form)
+      setForm(EMPTY_SUPPLIER); setEditingId(null); reload()
+    } catch (e) { alert('Save failed: ' + e.message) } finally { setSaving(false) }
+  }
+  const remove = async (s) => {
+    if (!window.confirm(`Delete supplier "${s.name}"?`)) return
+    try { await api.deleteSupplier(s.id); reload() } catch (e) { alert('Delete failed: ' + e.message) }
+  }
+
+  return (
+    <div className="grid" style={{ gridTemplateColumns: '340px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+      <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <h5 style={{ fontWeight: 800 }}>{editingId ? 'Edit Supplier' : 'Add Supplier'}</h5>
+        {[['name', 'Supplier Name *'], ['contact_person', 'Contact Person'], ['phone', 'Phone'], ['email', 'Email'], ['gstin', 'GSTIN'], ['address', 'Address']].map(([k, label]) => (
+          <div key={k} className="form-group">
+            <label className="form-label">{label}</label>
+            <input className="form-input" value={form[k]} onChange={e => set(k, e.target.value)} />
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {editingId && <button className="btn btn-secondary" onClick={() => { setEditingId(null); setForm(EMPTY_SUPPLIER) }}>Cancel</button>}
+          <button className="btn btn-primary" onClick={save} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
+            {saving ? <Loader size={14} className="spin" /> : <Save size={14} />} {editingId ? 'Save' : 'Add Supplier'}
+          </button>
+        </div>
+      </div>
+      <div className="card">
+        <div className="table-wrapper" style={{ border: 'none', borderRadius: 0 }}>
+          <table className="data-table">
+            <thead><tr><th>Supplier</th><th>Contact</th><th>Phone / Email</th><th>GSTIN</th><th></th></tr></thead>
+            <tbody>
+              {suppliers.length === 0 && (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--gray-400)' }}>
+                  <Users size={28} style={{ opacity: 0.3, display: 'block', margin: '0 auto 0.5rem' }} />No suppliers yet
+                </td></tr>
+              )}
+              {suppliers.map(s => (
+                <tr key={s.id}>
+                  <td><div style={{ fontWeight: 600 }}>{s.name}</div><div style={{ fontSize: '0.72rem', color: 'var(--gray-400)' }}>{s.address}</div></td>
+                  <td>{s.contact_person || '—'}</td>
+                  <td style={{ fontSize: '0.8rem' }}>{s.phone || '—'}<div style={{ color: 'var(--gray-400)' }}>{s.email}</div></td>
+                  <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{s.gstin || '—'}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Edit" onClick={() => { setEditingId(s.id); setForm({ ...EMPTY_SUPPLIER, ...Object.fromEntries(Object.keys(EMPTY_SUPPLIER).map(k => [k, s[k] || ''])) }) }}><Pencil size={13} /></button>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Delete" style={{ color: '#dc2626' }} onClick={() => remove(s)}><Trash2 size={13} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }

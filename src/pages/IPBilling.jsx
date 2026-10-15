@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, Plus, Calculator, FileText, CheckCircle, Loader, DollarSign, ArrowRight, ShieldCheck, CreditCard, X, Printer, AlertTriangle, Package as PackageIcon, HeartPulse, Receipt, Download } from 'lucide-react'
+import { Search, Plus, Calculator, FileText, CheckCircle, Loader, DollarSign, ArrowRight, ShieldCheck, CreditCard, X, Printer, AlertTriangle, Package as PackageIcon, HeartPulse, Receipt, Download, Trash2 } from 'lucide-react'
 import { api } from '../api'
 
 const CHARGE_CATEGORIES = [
@@ -70,17 +70,15 @@ export default function IPBilling() {
     if (!patientId) return
     setDataLoading(true)
     try {
-      const notes = await api.getNotes({ patient_id: patientId })
-      
-      const parsedCharges = notes.filter(n => n.note_type === 'IP_CHARGE').map(n => ({ ...JSON.parse(n.content), id: n.id, date: n.created_at }))
-      const parsedAdvances = notes.filter(n => n.note_type === 'IP_ADVANCE').map(n => ({ ...JSON.parse(n.content), id: n.id, date: n.created_at }))
-      const insRec = notes.filter(n => n.note_type === 'IP_INSURANCE').pop()
-      const pkgRec = notes.filter(n => n.note_type === 'IP_PACKAGE').pop()
+      const entries = await api.getIPBilling({ patient_id: patientId }) // oldest first
+      const of = type => entries.filter(e => e.entry_type === type).map(e => ({ ...e.data, id: e.id, date: e.created_at }))
+      const insRec = of('IP_INSURANCE').pop()
+      const pkgRec = of('IP_PACKAGE').pop()
 
-      setCharges(parsedCharges)
-      setAdvances(parsedAdvances)
-      setInsurance(insRec ? JSON.parse(insRec.content) : null)
-      setActivePackage(pkgRec ? JSON.parse(pkgRec.content) : null)
+      setCharges(of('IP_CHARGE'))
+      setAdvances(of('IP_ADVANCE'))
+      setInsurance(insRec || null)
+      setActivePackage(pkgRec && !pkgRec.removed ? pkgRec : null)
     } catch (e) {
       console.error(e)
     } finally {
@@ -106,9 +104,26 @@ export default function IPBilling() {
   const lowBalanceAlert = totalGross > 0 && (totalAdvances + insuranceApproved) < (totalGross * 0.2) // Warn if less than 20% covered
 
   const handleAddRecord = async (type, data) => {
-    await api.createNote({ patient_id: selectedPatient.id, doctor_id: selectedPatient.doctor_id, note_type: type, content: JSON.stringify(data) })
-    fetchBillingData(selectedPatient.id)
-    setShowChargeModal(false); setShowAdvanceModal(false); setShowInsuranceModal(false); setShowPackageModal(false)
+    try {
+      await api.createIPBillingEntry({ patient_id: selectedPatient.id, entry_type: type, data })
+      fetchBillingData(selectedPatient.id)
+      setShowChargeModal(false); setShowAdvanceModal(false); setShowInsuranceModal(false); setShowPackageModal(false)
+    } catch (e) { alert('Could not save: ' + e.message) }
+  }
+
+  // Remove a charge / advance entered by mistake
+  const handleDeleteEntry = async (id, label) => {
+    if (!window.confirm(`Delete this ${label}? This cannot be undone.`)) return
+    try {
+      await api.deleteIPBillingEntry(id)
+      fetchBillingData(selectedPatient.id)
+    } catch (e) { alert('Delete failed: ' + e.message) }
+  }
+
+  // Removing a package is recorded as a newer package entry, so the history stays
+  const handleRemovePackage = async () => {
+    if (!window.confirm(`Remove package "${activePackage.name}"? Billing returns to itemised tariff.`)) return
+    await handleAddRecord('IP_PACKAGE', { ...activePackage, removed: true })
   }
 
   const handleFinalSettle = async (finalData) => {
@@ -250,9 +265,9 @@ export default function IPBilling() {
                       <button className="btn btn-primary btn-sm" onClick={() => setShowChargeModal(true)}><Plus size={14}/> Add Charge</button>
                     </div>
                     <table className="data-table">
-                      <thead><tr><th>Date</th><th>Category</th><th>Description/HSN</th><th>Qty</th><th>Rate</th><th>GST</th><th>Amount</th><th>Status</th></tr></thead>
+                      <thead><tr><th>Date</th><th>Category</th><th>Description/HSN</th><th>Qty</th><th>Rate</th><th>GST</th><th>Amount</th><th>Status</th><th></th></tr></thead>
                       <tbody>
-                        {charges.length === 0 ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No charges recorded</td></tr> : null}
+                        {charges.length === 0 ? <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No charges recorded</td></tr> : null}
                         {charges.map(c => (
                           <tr key={c.id}>
                             <td style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{new Date(c.date).toLocaleDateString()}</td>
@@ -268,6 +283,7 @@ export default function IPBilling() {
                             <td>
                               {c.includedInPackage ? <span style={{ fontSize: '0.7rem', background: '#fef08a', color: '#854d0e', padding: '0.15rem 0.4rem', borderRadius: 4 }}>In Package</span> : <span style={{ fontSize: '0.7rem', background: 'var(--gray-100)', color: 'var(--gray-600)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>Billable</span>}
                             </td>
+                            <td><button className="btn btn-ghost btn-sm btn-icon" title="Delete charge" style={{ color: '#dc2626' }} onClick={() => handleDeleteEntry(c.id, 'charge')}><Trash2 size={13} /></button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -283,9 +299,9 @@ export default function IPBilling() {
                       <button className="btn btn-primary btn-sm" onClick={() => setShowAdvanceModal(true)} style={{ background: '#10b981', borderColor: '#10b981' }}><DollarSign size={14}/> Collect Advance</button>
                     </div>
                     <table className="data-table">
-                      <thead><tr><th>Date</th><th>Receipt No</th><th>Payment Mode</th><th>Collected By</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+                      <thead><tr><th>Date</th><th>Receipt No</th><th>Payment Mode</th><th>Collected By</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
                       <tbody>
-                        {advances.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No deposits collected</td></tr> : null}
+                        {advances.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No deposits collected</td></tr> : null}
                         {advances.map(a => (
                           <tr key={a.id}>
                             <td style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{new Date(a.date).toLocaleDateString()}</td>
@@ -293,6 +309,7 @@ export default function IPBilling() {
                             <td><span style={{ fontSize: '0.75rem', background: 'var(--gray-100)', padding: '0.2rem 0.5rem', borderRadius: 4 }}>{a.method}</span></td>
                             <td style={{ fontSize: '0.8rem', color: 'var(--gray-600)' }}>{a.collected_by || 'Admin'}</td>
                             <td style={{ fontWeight: 700, color: '#10b981', textAlign: 'right' }}>₹{Number(a.amount).toLocaleString()}</td>
+                            <td><button className="btn btn-ghost btn-sm btn-icon" title="Delete advance entered in error" style={{ color: '#dc2626' }} onClick={() => handleDeleteEntry(a.id, 'advance receipt')}><Trash2 size={13} /></button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -357,6 +374,7 @@ export default function IPBilling() {
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)' }}>Package Cost</div>
                             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary-700)' }}>₹{activePackage.cost.toLocaleString()}</div>
+                            <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626', marginTop: 6 }} onClick={handleRemovePackage}>Remove package</button>
                           </div>
                         </div>
                       </div>

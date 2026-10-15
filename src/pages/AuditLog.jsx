@@ -14,6 +14,17 @@ const ACTION_META = {
   DEFAULT:          { color: '#6366f1', bg: 'rgba(99,102,241,0.08)', icon: Database,   label: 'Action'  },
 }
 
+// Every module now logs XXX_CREATED / _UPDATED / _DELETED etc.; style by the verb
+const VERB_META = {
+  CREATED:   { color: '#10b981', bg: 'rgba(16,185,129,0.1)', icon: Plus,        label: 'Created' },
+  UPDATED:   { color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: Edit,        label: 'Updated' },
+  DELETED:   { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  icon: Trash2,      label: 'Deleted' },
+  CANCELLED: { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  icon: Trash2,      label: 'Cancelled' },
+  MERGED:    { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', icon: Edit,        label: 'Merged' },
+  PAYMENT:   { color: '#0d9488', bg: 'rgba(13,148,136,0.1)', icon: CheckCircle, label: 'Payment' },
+}
+const metaFor = action => VERB_META[String(action).split('_').pop()] || ACTION_META.DEFAULT
+
 const RESOURCE_COLORS = {
   patients:   '#6366f1',
   billing:    '#f59e0b',
@@ -177,7 +188,7 @@ export default function AuditLog() {
               </thead>
               <tbody>
                 {filtered.map(log => {
-                  const meta = ACTION_META[log.action] || ACTION_META.DEFAULT
+                  const meta = ACTION_META[log.action] || metaFor(log.action)
                   const ActionIcon = meta.icon
                   return (
                     <tr key={log.id} style={{ verticalAlign: 'middle' }}>

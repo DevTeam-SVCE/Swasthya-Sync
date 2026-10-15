@@ -15,7 +15,7 @@ const BASE_NAV = [
     section: 'Main',
     items: [
       { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
-      { label: 'Patients', path: '/app/patients', icon: Users, badge: 12 },
+      { label: 'Patients', path: '/app/patients', icon: Users, badgeKey: 'patients' },
     ],
   },
   {
@@ -33,7 +33,7 @@ const BASE_NAV = [
     section: 'Clinical',
     items: [
       { label: 'Doctor Workbench', path: '/app/cpoe', icon: Activity },
-      { label: 'Clinical Notes', path: '/app/clinical-notes', icon: FileText, badge: 5 },
+      { label: 'Clinical Notes', path: '/app/clinical-notes', icon: FileText, badgeKey: 'pendingNotes' },
       { label: 'Doctors', path: '/app/doctors', icon: UserSquare2 },
       { label: 'Discharge Summary', path: '/app/discharge-templates', icon: ClipboardList },
       { label: 'Patient Forms', path: '/app/patient-forms', icon: FolderOpen },
@@ -191,6 +191,18 @@ export default function DashboardLayout() {
     return () => clearInterval(interval)
   }, [fetchNotifs])
 
+  // Live sidebar badges: total patients, pending clinical notes.
+  // Refreshed every 60s and on every page change (e.g. after registering a patient).
+  const [navCounts, setNavCounts] = useState({})
+  const fetchNavCounts = useCallback(() => {
+    api.getNavCounts().then(setNavCounts).catch(() => {})
+  }, [])
+  useEffect(() => {
+    const interval = setInterval(fetchNavCounts, 60000)
+    return () => clearInterval(interval)
+  }, [fetchNavCounts])
+  useEffect(() => { fetchNavCounts() }, [location.pathname, fetchNavCounts])
+
   // Build nav with admin section injected if applicable
   const navSections = isAdmin ? [...BASE_NAV, ADMIN_NAV] : BASE_NAV
   const allItems = navSections.flatMap(s => s.items)
@@ -246,7 +258,7 @@ export default function DashboardLayout() {
                 >
                   <item.icon size={16} className="nav-link-icon" />
                   <span>{item.label}</span>
-                  {item.badge && <span className="nav-badge">{item.badge}</span>}
+                  {navCounts[item.badgeKey] > 0 && <span className="nav-badge">{navCounts[item.badgeKey]}</span>}
                 </div>
               ))}
             </div>

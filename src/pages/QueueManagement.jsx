@@ -27,12 +27,6 @@ const STATUS = {
   skipped:    { label: 'Skipped',    bg: 'rgba(239,68,68,0.08)', color: '#dc2626' },
 }
 
-let _tokenCounter = 1
-function genToken(dept) {
-  const prefix = dept ? dept.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : 'GN'
-  return `${prefix}${String(_tokenCounter++).padStart(3, '0')}`
-}
-
 // ─── Issue Token Modal ────────────────────────────────────────────────────────
 function TokenModal({ onClose, onIssued, doctors }) {
   const [patients, setPatients] = useState([])
@@ -47,22 +41,22 @@ function TokenModal({ onClose, onIssued, doctors }) {
 
   useEffect(() => { api.getPatients().then(setPatients).catch(() => {}) }, [])
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.patient_name && !form.patient_id) { setError('Patient name or selection required'); return }
     if (!form.department) { setError('Department is required'); return }
     setSaving(true); setError(null)
-    const token = genToken(form.department)
-    const entry = {
-      id: Date.now(),
-      token,
-      ...form,
-      patient_name: form.is_registered
-        ? (patients.find(p => p.id === form.patient_id)?.name || form.patient_name)
-        : form.patient_name,
-      issued_at: new Date(),
-      status: 'waiting',
-    }
-    setTimeout(() => { onIssued(entry); setSaving(false); onClose() }, 300)
+    try {
+      // The server numbers tokens per department per day
+      const entry = await api.issueToken({
+        patient_id: form.is_registered ? form.patient_id : null,
+        patient_name: form.is_registered
+          ? (patients.find(p => p.id === form.patient_id)?.name || form.patient_name)
+          : form.patient_name.trim(),
+        department: form.department, doctor_id: form.doctor_id || null, priority: form.priority,
+        phone: form.phone, visit_type: form.visit_type,
+      })
+      onIssued(entry); onClose()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
   return (
@@ -143,7 +137,7 @@ function TokenModal({ onClose, onIssued, doctors }) {
 function TokenCard({ entry, onCall, onDone, onSkip }) {
   const pri = PRIORITY_STYLES[entry.priority] || PRIORITY_STYLES.Normal
   const st = STATUS[entry.status] || STATUS.waiting
-  const elapsed = Math.floor((Date.now() - new Date(entry.issued_at)) / 60000)
+  const elapsed = Math.floor((Date.now() - new Date(entry.created_at)) / 60000)
 
   return (
     <div style={{
@@ -256,7 +250,14 @@ export default function QueueManagement() {
   const [deptFilter, setDeptFilter] = useState('All')
   const [showBoard, setShowBoard] = useState(false)
 
-  useEffect(() => { api.getDoctors().then(setDoctors).catch(() => {}) }, [])
+  // Today's queue lives on the server, so every counter / display screen sees the same list
+  const loadQueue = useCallback(() => api.getQueue().then(setQueue).catch(() => {}), [])
+  useEffect(() => {
+    api.getDoctors().then(setDoctors).catch(() => {})
+    loadQueue()
+    const t = setInterval(loadQueue, 15000)
+    return () => clearInterval(t)
+  }, [loadQueue])
 
   const filtered = queue.filter(q =>
     (deptFilter === 'All' || q.department === deptFilter) &&
@@ -265,19 +266,26 @@ export default function QueueManagement() {
   const done = queue.filter(q => q.status === 'done' || q.status === 'skipped')
 
   const addToQueue = (entry) => setQueue(prev => {
-    // Priority ordering: Emergency > Urgent > Senior Citizen > VIP > Normal
+    // Priority ordering: Emergency > Urgent > Senior Citizen > VIP > Normal (same as the server)
     const order = { Emergency: 0, Urgent: 1, 'Senior Citizen': 2, VIP: 3, Normal: 4 }
     const newQ = [...prev, entry]
     return newQ.sort((a, b) => (order[a.priority] ?? 4) - (order[b.priority] ?? 4))
   })
 
-  const callToken = (id) => setQueue(prev => prev.map(q =>
-    q.id === id ? { ...q, status: 'calling' } : q.status === 'calling' ? { ...q, status: 'waiting' } : q
-  ))
-
-  const updateStatus = (id, status) => setQueue(prev => prev.map(q => q.id === id ? { ...q, status } : q))
-
-  const skipToken = (id) => setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'skipped' } : q))
+  const updateStatus = async (id, status) => {
+    try {
+      await api.updateToken(id, status)
+      loadQueue() // calling one token resets any other "calling" token in that department
+    } catch (e) { alert('Could not update token: ' + e.message) }
+  }
+  const callToken = (id) => updateStatus(id, 'calling')
+  const skipToken = (id) => updateStatus(id, 'skipped')
+  const requeue = (id) => updateStatus(id, 'waiting')
+  const removeToken = async (entry) => {
+    if (!window.confirm(`Remove token ${entry.token} (${entry.patient_name})?`)) return
+    try { await api.deleteToken(entry.id); setQueue(prev => prev.filter(q => q.id !== entry.id)) }
+    catch (e) { alert('Could not remove token: ' + e.message) }
+  }
 
   const depts = ['All', ...Array.from(new Set(queue.map(q => q.department).filter(Boolean)))]
   const stats = {
@@ -370,6 +378,10 @@ export default function QueueManagement() {
                 <span style={{ fontSize: '0.8125rem', color: 'var(--gray-600)', flex: 1 }}>{entry.patient_name}</span>
                 <span style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}>{entry.department}</span>
                 <span style={{ ...STATUS[entry.status], fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.375rem', borderRadius: 999 }}>{STATUS[entry.status]?.label}</span>
+                {entry.status === 'skipped' && (
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }} onClick={() => requeue(entry.id)}>Re-queue</button>
+                )}
+                <button className="btn btn-ghost btn-sm btn-icon" title="Remove" style={{ color: 'var(--gray-400)' }} onClick={() => removeToken(entry)}><X size={12} /></button>
               </div>
             ))}
           </div>

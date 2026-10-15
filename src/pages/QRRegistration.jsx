@@ -6,11 +6,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api'
 import { Html5Qrcode } from 'html5-qrcode'
-
-// ─── QR code via free public API (no npm install needed) ──────────────────────
-function qrUrl(data, size = 200) {
-  return `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(data)}&size=${size}x${size}&ecc=M&margin=2&color=1a1a2e`
-}
+import { useQrDataUrl } from '../components/Codes'
 
 // ─── Encode patient data into QR payload (ABDM-inspired) ─────────────────────
 function buildQrPayload(patient) {
@@ -38,7 +34,7 @@ const BG_COLORS = {
 // ─── Patient QR Card (printable) ─────────────────────────────────────────────
 function PatientCard({ patient, size = 'full' }) {
   const payload = buildQrPayload(patient)
-  const qr = qrUrl(payload, size === 'thumb' ? 80 : 140)
+  const qr = useQrDataUrl(payload, size === 'thumb' ? 160 : 280) // drawn locally; 2× for sharp printing
   const compact = size === 'thumb'
 
   return (
@@ -271,6 +267,7 @@ function HospitalQRPanel({ hospitalInfo }) {
     state: 'Maharashtra',
     redirect: 'https://swasthyasync.hospital/register',
   })
+  const hospitalQr = useQrDataUrl(hospitalPayload, 360)
 
   return (
     <div style={{ background: '#fff', borderRadius: 'var(--radius-xl)', border: '1.5px solid var(--gray-100)', padding: '1.5rem', textAlign: 'center' }}>
@@ -279,7 +276,7 @@ function HospitalQRPanel({ hospitalInfo }) {
         <div style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>Display at OPD counter for Scan & Share</div>
       </div>
       <div style={{ display: 'inline-block', padding: '1.25rem', background: '#f8fafc', borderRadius: 16, border: '2px solid var(--primary-100)', marginBottom: '1rem' }}>
-        <img src={qrUrl(hospitalPayload, 180)} alt="Hospital QR" style={{ width: 180, height: 180, display: 'block' }} />
+        <img src={hospitalQr} alt="Hospital QR" style={{ width: 180, height: 180, display: 'block' }} />
       </div>
       <div style={{ display: 'flex', gap: '0.625rem', justifyContent: 'center', flexWrap: 'wrap' }}>
         <button className="btn btn-primary btn-sm"><Download size={13} /> Download</button>

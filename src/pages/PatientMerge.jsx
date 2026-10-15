@@ -83,17 +83,21 @@ function MergeCard({ pair, onMerge, onDismiss }) {
   const [expanded, setExpanded] = useState(false)
   const [keepRecord, setKeepRecord] = useState('a')
   const [merging, setMerging] = useState(false)
-  const [merged, setMerged] = useState(false)
+  const [merged, setMerged] = useState(null)
   const keeper = keepRecord === 'a' ? pair.a : pair.b
   const dupe = keepRecord === 'a' ? pair.b : pair.a
 
   const handleMerge = async () => {
-    if (!window.confirm(`Merge ${dupe.name} (${dupe.id}) into ${keeper.name} (${keeper.id})? The duplicate record will be deactivated. This cannot be undone.`)) return
+    if (!window.confirm(`Merge ${dupe.name} (${dupe.id}) into ${keeper.name} (${keeper.id})? All visits, labs, bills and forms move to ${keeper.id} and ${dupe.id} is removed. This cannot be undone.`)) return
     setMerging(true)
-    // Simulate merge (in production would call backend)
-    await new Promise(r => setTimeout(r, 800))
-    setMerged(true); setMerging(false)
-    onMerge(pair)
+    try {
+      const res = await api.mergePatients(keeper.id, dupe.id)
+      const moved = Object.values(res.moved || {}).reduce((a, b) => a + b, 0)
+      setMerged({ keeper, dupe, moved })
+      onMerge(pair, dupe.id)
+    } catch (e) {
+      alert('Merge failed: ' + e.message)
+    } finally { setMerging(false) }
   }
 
   if (merged) return (
@@ -101,7 +105,7 @@ function MergeCard({ pair, onMerge, onDismiss }) {
       <CheckCircle size={20} color="#10b981" />
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 700, color: '#059669', fontSize: '0.875rem' }}>Records Merged Successfully</div>
-        <div style={{ fontSize: '0.78rem', color: '#6ee7b7' }}>{dupe.name} ({dupe.id}) merged into {keeper.name} ({keeper.id})</div>
+        <div style={{ fontSize: '0.78rem', color: '#047857' }}>{merged.dupe.name} ({merged.dupe.id}) merged into {merged.keeper.name} ({merged.keeper.id}) · {merged.moved} linked record{merged.moved === 1 ? '' : 's'} moved</div>
       </div>
     </div>
   )
@@ -149,7 +153,7 @@ function MergeCard({ pair, onMerge, onDismiss }) {
 
           <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 'var(--radius-lg)', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#dc2626' }}>
             <AlertTriangle size={13} style={{ display: 'inline', marginRight: '0.375rem' }} />
-            <strong>Warning:</strong> Merging will deactivate the duplicate record. All visits, labs, and forms will be re-linked to the primary record. This action generates an audit log entry.
+            <strong>Warning:</strong> Merging removes the duplicate record. All visits, labs, bills and forms are re-linked to the primary record, and blank details on the primary are filled from the duplicate. This action generates an audit log entry.
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -182,7 +186,21 @@ export default function PatientMerge() {
     }).catch(() => setLoading(false))
   }, [])
 
-  const activePairs = pairs.filter(p => !dismissed.some(d => d.a.id === p.a.id && d.b.id === p.b.id))
+  const [mergedIds, setMergedIds] = useState([])
+  const [mergedPairs, setMergedPairs] = useState([])
+  // Once a record is merged away, other suggested pairs that include it no longer apply
+  // (the pair that was merged stays, to show its success message)
+  const activePairs = pairs.filter(p =>
+    mergedPairs.includes(p) || (
+      !dismissed.some(d => d.a.id === p.a.id && d.b.id === p.b.id) &&
+      !mergedIds.includes(p.a.id) && !mergedIds.includes(p.b.id)))
+  const onMerged = (pair, dupId) => {
+    setMergedPairs(ps => [...ps, pair])
+    setMergedIds(ids => [...ids, dupId])
+    setPatients(ps => ps.filter(p => p.id !== dupId))
+    if (manualA?.id === dupId) setManualA(null)
+    if (manualB?.id === dupId) setManualB(null)
+  }
   const highConf = activePairs.filter(p => p.confidence >= 60)
 
   const filteredPts = patients.filter(p =>
@@ -235,7 +253,7 @@ export default function PatientMerge() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               {activePairs.sort((a, b) => b.confidence - a.confidence).map((pair, idx) => (
-                <MergeCard key={idx} pair={pair} onMerge={p => setDismissed(d => [...d, p])} onDismiss={p => setDismissed(d => [...d, p])} />
+                <MergeCard key={`${pair.a.id}-${pair.b.id}`} pair={pair} onMerge={onMerged} onDismiss={p => setDismissed(d => [...d, p])} />
               ))}
             </div>
           )}

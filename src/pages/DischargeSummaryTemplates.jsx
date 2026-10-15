@@ -4,10 +4,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { BASE_URL, SERVER_URL } from '../api'
+import { api, BASE_URL, SERVER_URL } from '../api'
+import TemplateEditModal from '../components/TemplateEditModal'
 import {
   Upload, Search, Trash2, FileText, Eye, X,
-  CheckCircle, AlertCircle, Loader, FolderOpen,
+  CheckCircle, AlertCircle, Loader, FolderOpen, Pencil,
 } from 'lucide-react'
 
 const CATEGORIES = ['General', 'Medical', 'Surgical', 'Cardiac', 'Orthopaedic',
@@ -169,6 +170,12 @@ export default function DischargeSummaryTemplates() {
   const [catFilter, setCatFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
   const [deleting, setDeleting] = useState(null)
+  const [editing, setEditing] = useState(null)
+
+  const saveEdit = async (data) => {
+    const updated = await api.updateDischargeTemplate(editing.id, data)
+    setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t))
+  }
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true); setError(null)
@@ -194,10 +201,7 @@ export default function DischargeSummaryTemplates() {
     if (!window.confirm('Delete this discharge template? This cannot be undone.')) return
     setDeleting(id)
     try {
-      await fetch(`${BASE_URL}/discharge-templates/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      await api.deleteDischargeTemplate(id)
       setTemplates(t => t.filter(x => x.id !== id))
     } catch (e) { alert('Delete failed: ' + e.message) } finally { setDeleting(null) }
   }
@@ -301,6 +305,10 @@ export default function DischargeSummaryTemplates() {
                     className="btn btn-secondary btn-sm" style={{ flex: 1, justifyContent: 'center', textDecoration: 'none' }}>
                     <Eye size={13} /> Preview PDF
                   </a>
+                  <button className="btn btn-secondary btn-sm" style={{ padding: '0.375rem 0.75rem' }} title="Edit name / category"
+                    onClick={() => setEditing(t)}>
+                    <Pencil size={13} />
+                  </button>
                   <button className="btn btn-danger btn-sm" style={{ padding: '0.375rem 0.75rem' }}
                     onClick={() => handleDelete(t.id)} disabled={deleting === t.id}>
                     {deleting === t.id ? <Loader size={12} className="spin" /> : <Trash2 size={13} />}
@@ -313,6 +321,7 @@ export default function DischargeSummaryTemplates() {
       )}
 
       {showModal && <UploadModal onClose={() => setShowModal(false)} onUploaded={t => setTemplates(prev => [t, ...prev])} token={token} />}
+      {editing && <TemplateEditModal template={editing} category={editing.type} categories={CATEGORIES} onClose={() => setEditing(null)} onSave={saveEdit} />}
     </div>
   )
 }

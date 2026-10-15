@@ -16,9 +16,12 @@ const WARDS = ['ICU', 'General', 'Cardiology', 'Obs & Gyn', 'Neurology', 'Orthop
 const WARD_FILTER = ['All', ...WARDS]
 const BED_TYPES = ['General', 'ICU', 'Private', 'Semi-Private', 'Maternity', 'Pediatric', 'Emergency']
 
-// ─── Add Bed Modal ────────────────────────────────────────────────────────────
-function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
-  const [form, setForm] = useState({ id: '', ward: 'General', bed_type: 'General', status: 'available' })
+// ─── Add / Edit Bed Modal ─────────────────────────────────────────────────────
+function AddBedModal({ bed, onClose, onAdded, existingBeds = [] }) {
+  const [form, setForm] = useState(bed
+    ? { id: bed.id, ward: bed.ward, bed_type: bed.bed_type || 'General', status: bed.status }
+    : { id: '', ward: 'General', bed_type: 'General', status: 'available' })
+  const occupied = bed?.status === 'occupied'
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
@@ -27,6 +30,17 @@ function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
   const handleSubmit = async () => {
     if (!form.id.trim()) { setError('Bed ID is required'); return }
     if (!form.ward) { setError('Ward is required'); return }
+    if (bed) {
+      setSaving(true); setError(null)
+      try {
+        const updated = await api.updateBedDetails(bed.id, occupied
+          ? { ward: form.ward, bed_type: form.bed_type }
+          : { ward: form.ward, bed_type: form.bed_type, status: form.status })
+        onAdded({ ...bed, ...updated })
+        onClose()
+      } catch (e) { setError(e.message) } finally { setSaving(false) }
+      return
+    }
     if (existingBeds.some(b => b.id === form.id.toUpperCase())) {
       setError(`Bed ID "${form.id.toUpperCase()}" already exists. Please use a unique ID.`);
       return
@@ -44,8 +58,8 @@ function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
       <div className="modal">
         <div className="modal-header">
           <div>
-            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>Add New Bed</h4>
-            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>Register a new bed in a ward</p>
+            <h4 style={{ color: 'var(--gray-900)', fontWeight: 700 }}>{bed ? `Edit Bed ${bed.id}` : 'Add New Bed'}</h4>
+            <p style={{ fontSize: '0.8rem', color: 'var(--gray-400)', marginTop: 2 }}>{bed ? 'Change ward, type or availability' : 'Register a new bed in a ward'}</p>
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
@@ -58,7 +72,7 @@ function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
               <label className="form-label">Bed ID <span style={{ color: 'var(--danger)' }}>*</span></label>
-              <input className="form-input" placeholder="e.g. B-101, ICU-01" value={form.id} onChange={e => set('id', e.target.value.toUpperCase())} />
+              <input className="form-input" placeholder="e.g. B-101, ICU-01" value={form.id} disabled={!!bed} onChange={e => set('id', e.target.value.toUpperCase())} />
               <span style={{ fontSize: '0.72rem', color: 'var(--gray-400)', marginTop: '0.25rem', display: 'block' }}>Must be unique within your hospital</span>
             </div>
             <div className="form-group">
@@ -73,8 +87,8 @@ function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
                 {BED_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
-            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-              <label className="form-label">Initial Status</label>
+            {!occupied && <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">{bed ? 'Status' : 'Initial Status'}</label>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 {['available', 'maintenance', 'reserved'].map(s => (
                   <button key={s} type="button" onClick={() => set('status', s)}
@@ -83,14 +97,14 @@ function AddBedModal({ onClose, onAdded, existingBeds = [] }) {
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
-            {saving ? <Loader size={14} className="spin" /> : <Plus size={14} />}
-            {saving ? 'Adding...' : 'Add Bed'}
+            {saving ? <Loader size={14} className="spin" /> : bed ? <CheckCircle size={14} /> : <Plus size={14} />}
+            {saving ? 'Saving...' : bed ? 'Save' : 'Add Bed'}
           </button>
         </div>
       </div>
@@ -336,6 +350,7 @@ export default function IPD() {
   const [selected, setSelected] = useState(null)
   const [showAssign, setShowAssign] = useState(false)
   const [showAddBed, setShowAddBed] = useState(false)
+  const [editingBed, setEditingBed] = useState(null)
   const [releasingId, setReleasingId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
 
@@ -442,22 +457,28 @@ export default function IPD() {
     ))
   }, [activeForm])
 
+  // Assign a form to the bed's patient and add it to the list (also used by the viewer's Records panel)
+  const createForm = async (template) => {
+    const form = await api.createPatientForm({ template_id: template.id, patient_id: selected.patient_id, filled_by: '' })
+    const enriched = { ...form, template_name: template.name, category: template.category, file_path: template.file_path, file_name: template.file_name, page_count: template.page_count, layout: template.layout, type: 'form' }
+    setPatientForms(prev => [enriched, ...prev])
+    return enriched
+  }
+
   const handleAssignForm = async (template) => {
     if (!selected?.patient_id) return
     setAssigningFormId(template.id)
     try {
-      const form = await api.createPatientForm({ template_id: template.id, patient_id: selected.patient_id, filled_by: '' })
-      const enriched = { ...form, template_name: template.name, category: template.category, file_path: template.file_path, file_name: template.file_name, type: 'form' }
-      setPatientForms(prev => [enriched, ...prev])
-      setActiveForm(enriched)
+      setActiveForm(await createForm(template))
     } catch (e) { alert('Failed to assign form: ' + e.message) }
     finally { setAssigningFormId(null) }
   }
 
-  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus) => {
-    if (!activeForm || activeForm.type === 'discharge') return
+  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus, formId) => {
+    if (!formId && (!activeForm || activeForm.type === 'discharge')) return
+    const id = formId ?? activeForm.id
     setPatientForms(prev => prev.map(f =>
-      f.id === activeForm.id ? { ...f, annotations: updatedAnnotations, status: newStatus || f.status } : f
+      f.id === id ? { ...f, annotations: updatedAnnotations, status: newStatus || f.status } : f
     ))
   }, [activeForm])
 
@@ -612,6 +633,15 @@ export default function IPD() {
                 {bed.has_alert && (
                   <span style={{ position: 'absolute', top: '0.625rem', right: '0.625rem', width: 8, height: 8, borderRadius: '50%', background: '#ef4444', animation: 'pulse-dot 2s infinite' }} />
                 )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEditingBed(bed) }}
+                  title="Edit ward / type / status"
+                  style={{ position: 'absolute', top: '0.5rem', right: bed.status !== 'occupied' ? '2.25rem' : '0.5rem', background: 'var(--gray-100)', border: 'none', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--gray-500)', opacity: 0.7 }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity = '0.7'}
+                >
+                  <Pen size={11} />
+                </button>
                 {/* Delete button — only for non-occupied beds */}
                 {bed.status !== 'occupied' && (
                   <button
@@ -696,6 +726,7 @@ export default function IPD() {
             onAnnotationsSaved={handleAnnotationsSaved}
             allForms={(patientForms || []).map(f => ({ ...f, type: 'form', patient_name: selected.patient_name }))}
             onSwitchForm={(f) => setActiveForm(f)}
+            onAddForm={async (t) => ({ ...(await createForm(t)), type: 'form', patient_name: selected.patient_name })}
           />
         </div>,
         document.body
@@ -1022,6 +1053,13 @@ export default function IPD() {
           onClose={() => setShowAddBed(false)}
           onAdded={handleBedAdded}
           existingBeds={beds}
+        />
+      )}
+      {editingBed && (
+        <AddBedModal
+          bed={editingBed}
+          onClose={() => setEditingBed(null)}
+          onAdded={updated => setBeds(prev => prev.map(b => b.id === updated.id ? updated : b))}
         />
       )}
 

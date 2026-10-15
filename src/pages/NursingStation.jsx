@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, ClipboardList, PenTool, CheckCircle, Search, Droplet, HeartPulse, Plus, X, Loader } from 'lucide-react'
+import { Activity, ClipboardList, PenTool, CheckCircle, Search, HeartPulse, Plus, X, Loader, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 
@@ -9,6 +9,7 @@ export default function NursingStation() {
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [activeTab, setActiveTab] = useState('vitals')
   const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
 
   // Data states
   const [vitals, setVitals] = useState([])
@@ -41,12 +42,13 @@ export default function NursingStation() {
     if (!patientId) return
     setLoading(true)
     try {
-      const allNotes = await api.getNotes({ patient_id: patientId })
-      setVitals(allNotes.filter(n => n.note_type === 'VITALS').map(n => ({ id: n.id, date: n.created_at, ...JSON.parse(n.content) })))
-      setEmar(allNotes.filter(n => n.note_type === 'EMAR').map(n => ({ id: n.id, date: n.created_at, ...JSON.parse(n.content) })))
-      setNotes(allNotes.filter(n => n.note_type === 'NURSING_NOTE').map(n => ({ id: n.id, date: n.created_at, ...JSON.parse(n.content) })))
+      const records = await api.getNursingRecords({ patient_id: patientId })
+      const of = type => records.filter(r => r.record_type === type).map(r => ({ ...r.data, id: r.id, date: r.created_at }))
+      setVitals(of('VITALS'))
+      setEmar(of('EMAR'))
+      setNotes(of('NURSING_NOTE'))
     } catch (e) {
-      console.error("Failed to load clinical notes", e)
+      console.error("Failed to load nursing records", e)
     } finally {
       setLoading(false)
     }
@@ -61,12 +63,7 @@ export default function NursingStation() {
   const handleSaveData = async (type, data) => {
     try {
       const finalData = { ...data, nurse_name: user?.name || 'RN. Duty' }
-      await api.createNote({
-        patient_id: selectedPatient.id,
-        doctor_id: selectedPatient.doctor_id, // Assigned doctor
-        note_type: type,
-        content: JSON.stringify(finalData)
-      })
+      await api.createNursingRecord({ patient_id: selectedPatient.id, record_type: type, data: finalData })
       fetchData(selectedPatient.id)
       setShowVitalsModal(false)
       setShowEmarModal(false)
@@ -83,15 +80,32 @@ export default function NursingStation() {
       delete updatedData.id
       delete updatedData.date
       
-      // Update the existing eMAR note in-place instead of creating a duplicate note
-      await api.updateNote(recordId, {
-        content: JSON.stringify(updatedData)
-      })
+      await api.updateNursingRecord(recordId, { data: updatedData })
       fetchData(selectedPatient.id)
     } catch (e) {
       alert("Error updating medication status: " + e.message)
     }
   }
+
+  const updateMedication = async (record, patch, confirmText) => {
+    if (confirmText && !window.confirm(confirmText)) return
+    const { id, date, ...data } = record
+    try {
+      await api.updateNursingRecord(id, { data: { ...data, ...patch } })
+      fetchData(selectedPatient.id)
+    } catch (e) { alert("Error updating medication: " + e.message) }
+  }
+
+  const deleteRecord = async (id, label) => {
+    if (!window.confirm(`Delete this ${label}? Use this only for entries made in error.`)) return
+    try {
+      await api.deleteNursingRecord(id)
+      fetchData(selectedPatient.id)
+    } catch (e) { alert("Error deleting record: " + e.message) }
+  }
+
+  const shownPatients = patients.filter(p => !search ||
+    p.name.toLowerCase().includes(search.toLowerCase()) || String(p.id).toLowerCase().includes(search.toLowerCase()))
 
   return (
     <div className="animate-fadeInUp" style={{ display: 'flex', gap: '1.5rem', height: 'calc(100vh - 100px)' }}>
@@ -104,11 +118,11 @@ export default function NursingStation() {
         <div style={{ padding: '0.75rem' }}>
           <div style={{ position: 'relative' }}>
             <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--gray-400)' }} />
-            <input className="form-input form-sm" style={{ paddingLeft: '2.25rem', width: '100%', background: 'var(--gray-50)' }} placeholder="Search patients..." />
+            <input className="form-input form-sm" style={{ paddingLeft: '2.25rem', width: '100%', background: 'var(--gray-50)' }} placeholder="Search patients..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
         <div style={{ overflowY: 'auto', flex: 1, padding: '0.5rem' }}>
-          {patients.map(p => (
+          {shownPatients.map(p => (
             <div 
               key={p.bed_id} 
               onClick={() => setSelectedPatient(p)}
@@ -184,9 +198,9 @@ export default function NursingStation() {
                         <button className="btn btn-primary btn-sm" onClick={() => setShowVitalsModal(true)}><Plus size={14}/> Record Vitals</button>
                       </div>
                       <table className="data-table">
-                        <thead><tr><th>Date & Time</th><th>Temp (°F)</th><th>Pulse (bpm)</th><th>BP (mmHg)</th><th>SpO2 (%)</th><th>Resp (bpm)</th><th>Logged By</th></tr></thead>
+                        <thead><tr><th>Date & Time</th><th>Temp (°F)</th><th>Pulse (bpm)</th><th>BP (mmHg)</th><th>SpO2 (%)</th><th>Resp (bpm)</th><th>Logged By</th><th></th></tr></thead>
                         <tbody>
-                          {vitals.length === 0 ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No vitals recorded</td></tr> : null}
+                          {vitals.length === 0 ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No vitals recorded</td></tr> : null}
                           {vitals.map(v => (
                             <tr key={v.id}>
                               <td style={{ fontWeight: 600 }}>{new Date(v.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
@@ -196,6 +210,7 @@ export default function NursingStation() {
                               <td>{v.spo2}</td>
                               <td>{v.resp}</td>
                               <td style={{ color: 'var(--primary-600)', fontSize: '0.8rem', fontWeight: 700 }}>{v.nurse_name || 'RN. On Duty'}</td>
+                              <td><button className="btn btn-ghost btn-sm btn-icon" title="Delete entry made in error" style={{ color: 'var(--gray-400)' }} onClick={() => deleteRecord(v.id, 'vitals entry')}><Trash2 size={13} /></button></td>
                             </tr>
                           ))}
                         </tbody>
@@ -216,21 +231,29 @@ export default function NursingStation() {
                           {emar.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-400)' }}>No medications active</td></tr> : null}
                           {emar.map(m => (
                             <tr key={m.id}>
-                              <td style={{ fontWeight: 700, color: 'var(--gray-800)' }}>{m.drug}</td>
+                              <td style={{ fontWeight: 700, color: m.status === 'Discontinued' ? 'var(--gray-400)' : 'var(--gray-800)', textDecoration: m.status === 'Discontinued' ? 'line-through' : 'none' }}>{m.drug}</td>
                               <td>{m.route}</td>
                               <td style={{ fontWeight: 600 }}>{m.frequency}</td>
                               <td>
-                                <span style={{ padding: '0.2rem 0.5rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, background: m.status === 'Given' ? '#d1fae5' : '#fef3c7', color: m.status === 'Given' ? '#059669' : '#b45309' }}>
+                                <span style={{ padding: '0.2rem 0.5rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, background: m.status === 'Given' ? '#d1fae5' : m.status === 'Discontinued' ? 'var(--gray-100)' : '#fef3c7', color: m.status === 'Given' ? '#059669' : m.status === 'Discontinued' ? 'var(--gray-500)' : '#b45309' }}>
                                   {m.status || 'Pending'}
                                 </span>
                               </td>
                               <td style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>{m.last_given || '-'}</td>
                               <td>
-                                {m.status !== 'Given' && (
-                                  <button className="btn btn-sm btn-secondary" style={{ borderColor: '#10b981', color: '#10b981' }} onClick={() => markMedicationGiven(m)}>
-                                    <CheckCircle size={14} /> Mark Given
-                                  </button>
-                                )}
+                                <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                                  {m.status === 'Discontinued' ? null : m.status !== 'Given' ? (
+                                    <button className="btn btn-sm btn-secondary" style={{ borderColor: '#10b981', color: '#10b981' }} onClick={() => markMedicationGiven(m)}>
+                                      <CheckCircle size={14} /> Mark Given
+                                    </button>
+                                  ) : (
+                                    <button className="btn btn-sm btn-ghost" title="Next dose due" onClick={() => updateMedication(m, { status: 'Pending' })}>Next Dose</button>
+                                  )}
+                                  {m.status !== 'Discontinued' && (
+                                    <button className="btn btn-sm btn-ghost" style={{ color: '#dc2626' }} onClick={() => updateMedication(m, { status: 'Discontinued' }, `Discontinue ${m.drug}?`)}>Stop</button>
+                                  )}
+                                  <button className="btn btn-ghost btn-sm btn-icon" title="Delete entry made in error" style={{ color: 'var(--gray-400)' }} onClick={() => deleteRecord(m.id, 'medication entry')}><Trash2 size={13} /></button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -252,7 +275,10 @@ export default function NursingStation() {
                           <div key={n.id} style={{ background: '#fff', padding: '1.25rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--gray-200)', boxShadow: 'var(--shadow-sm)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
                               <div style={{ fontWeight: 800, color: 'var(--gray-900)' }}>{n.title}</div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{new Date(n.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--gray-500)' }}>
+                                {new Date(n.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                <button className="btn btn-ghost btn-sm btn-icon" title="Delete note made in error" style={{ color: 'var(--gray-400)' }} onClick={() => deleteRecord(n.id, 'nursing note')}><Trash2 size={13} /></button>
+                              </div>
                             </div>
                             <p style={{ fontSize: '0.95rem', color: 'var(--gray-700)', margin: 0, lineHeight: 1.6 }}>{n.description}</p>
                             <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary-600)', marginTop: '1rem', borderTop: '1px solid var(--gray-100)', paddingTop: '0.5rem' }}>Logged by: {n.nurse_name || 'RN. Staff'}</div>

@@ -163,10 +163,12 @@ export default function PatientForms() {
   }, [])
 
   // When annotations are saved, update the local card status
-  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus) => {
-    if (!openForm) return
+  // formId is passed when the viewer saves a different form than the one open (parked drafts)
+  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus, formId) => {
+    const id = formId ?? openForm?.id
+    if (!id) return
     setPatientForms(prev => prev.map(f =>
-      f.id === openForm.id
+      f.id === id
         ? { ...f, annotations: updatedAnnotations, status: newStatus || f.status }
         : f
     ))
@@ -203,6 +205,14 @@ export default function PatientForms() {
             patientData={selectedPatient}
             onClose={closeForm}
             onAnnotationsSaved={handleAnnotationsSaved}
+            allForms={patientForms.map(f => ({ ...f, type: 'form', patient_name: selectedPatient?.name }))}
+            onSwitchForm={(f) => setOpenForm(f)}
+            onAddForm={async (t) => {
+              const form = await api.createPatientForm({ template_id: t.id, patient_id: selectedPatient.id, filled_by: '' })
+              const enriched = { ...form, template_name: t.name, category: t.category, file_path: t.file_path, file_name: t.file_name, page_count: t.page_count, layout: t.layout }
+              setPatientForms(prev => [enriched, ...prev])
+              return { ...enriched, type: 'form', patient_name: selectedPatient?.name }
+            }}
           />
         </div>,
         document.body

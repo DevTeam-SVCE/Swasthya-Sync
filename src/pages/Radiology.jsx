@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Search, Plus, X, Loader, UploadCloud, FileText, ExternalLink, CheckCircle, ScanLine, Download, Mail } from 'lucide-react'
+import { Search, Plus, X, Loader, UploadCloud, FileText, ExternalLink, CheckCircle, ScanLine, Download, Mail, Trash2 } from 'lucide-react'
 import { api, SERVER_URL } from '../api'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -920,6 +920,13 @@ export default function Radiology() {
   }, [])
 
   const handleSave    = (o) => setOrders(prev => [o, ...prev])
+  const handleDelete  = async (o) => {
+    if (!window.confirm(`Delete radiology order #${o.id} (${o.study_type}) for ${o.patient_name}? Use this for orders placed by mistake.`)) return
+    try {
+      await api.deleteRadiology(o.id)
+      setOrders(prev => prev.filter(x => x.id !== o.id))
+    } catch (e) { alert(e.message) }
+  }
   const handleUpdated = (updated) => {
     setOrders(prev => prev.map(o => o.id === updated.id ? { ...o, ...updated } : o))
     setSelectedOrder(prev => prev ? { ...prev, ...updated } : prev)
@@ -1014,9 +1021,14 @@ export default function Radiology() {
                     </span>
                   </td>
                   <td>
-                    <button className="btn btn-sm btn-secondary" style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem' }} onClick={() => setSelectedOrder(o)}>
-                      {o.result_pdf_path ? <><FileText size={11} /> PDF</> : o.status === 'Reported' ? <><CheckCircle size={11} /> Report</> : 'View'}
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
+                      <button className="btn btn-sm btn-secondary" style={{ padding: '0.3rem 0.625rem', fontSize: '0.75rem' }} onClick={() => setSelectedOrder(o)}>
+                        {o.result_pdf_path ? <><FileText size={11} /> PDF</> : o.status === 'Reported' ? <><CheckCircle size={11} /> Report</> : 'View'}
+                      </button>
+                      {o.status !== 'Reported' && (
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Delete order" style={{ color: '#dc2626' }} onClick={() => handleDelete(o)}><Trash2 size={13} /></button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

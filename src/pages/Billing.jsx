@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, Receipt, X, CheckCircle, Download, Loader, Activity, ShieldCheck, ArrowRight, CreditCard, Stethoscope, FileText, Calculator, Pill, FlaskConical } from 'lucide-react'
+import { Search, Plus, Receipt, X, CheckCircle, Download, Loader, Activity, ShieldCheck, ArrowRight, CreditCard, Stethoscope, FileText, Calculator, Pill, FlaskConical, Trash2, Pencil, Ban } from 'lucide-react'
 import { api } from '../api'
 
 const STATUS_STYLES = {
@@ -7,13 +7,43 @@ const STATUS_STYLES = {
   Pending: { bg: 'rgba(245,158,11,0.1)', color: '#b45309', label: 'Pending' },
   Partial: { bg: 'rgba(99,102,241,0.1)', color: '#4338ca', label: 'Partial' },
   Overdue: { bg: 'rgba(239,68,68,0.1)', color: '#dc2626', label: 'Overdue' },
+  Cancelled: { bg: 'var(--gray-100)', color: 'var(--gray-500)', label: 'Cancelled' },
 }
 
-function BillModal({ bill, onClose, onMarkPaid }) {
-  if (!bill) return null
+const PAYMENT_METHODS = ['Cash', 'UPI', 'Card', 'Net Banking', 'Cheque', 'Insurance']
+
+function BillModal({ bill, onClose, onUpdated, onDeleted }) {
   const total = Number(bill.total_amount) || 0
   const paid = Number(bill.paid_amount) || 0
   const balance = total - paid
+  const cancelled = bill.status === 'Cancelled'
+  const [mode, setMode] = useState(null) // 'pay' | 'edit' | 'cancel'
+  const [pay, setPay] = useState({ amount: balance, payment_method: bill.payment_method || 'Cash' })
+  const [edit, setEdit] = useState({ total_amount: total, type: bill.type || '' })
+  const [cancel, setCancel] = useState({ reason: '', refund_amount: paid })
+  const [busy, setBusy] = useState(false)
+
+  const run = async (fn) => {
+    setBusy(true)
+    try { await fn() } catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+  const keepJoins = u => ({ ...bill, ...u })
+  const recordPayment = () => run(async () => {
+    onUpdated(keepJoins(await api.recordPayment(bill.id, { amount: Number(pay.amount), payment_method: pay.payment_method })))
+    setMode(null)
+  })
+  const saveEdit = () => run(async () => {
+    onUpdated(keepJoins(await api.updateBilling(bill.id, { total_amount: Number(edit.total_amount), type: edit.type })))
+    setMode(null)
+  })
+  const cancelBill = () => run(async () => {
+    onUpdated(keepJoins(await api.cancelBilling(bill.id, { reason: cancel.reason, refund_amount: Number(cancel.refund_amount) || 0 })))
+    setMode(null)
+  })
+  const deleteBill = () => {
+    if (!window.confirm(`Delete invoice ${bill.id}? This cannot be undone.`)) return
+    run(async () => { await api.deleteBilling(bill.id); onDeleted(bill.id); onClose() })
+  }
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -25,10 +55,7 @@ function BillModal({ bill, onClose, onMarkPaid }) {
               {bill.created_at ? new Date(bill.created_at).toLocaleDateString('en-IN') : '—'} · {bill.type}
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-secondary btn-sm"><Download size={13} /> Download PDF</button>
-            <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
-          </div>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="modal-body">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', padding: '1.25rem', background: 'var(--gray-50)', borderRadius: 'var(--radius-xl)', flexWrap: 'wrap', gap: '1rem' }}>
@@ -36,6 +63,11 @@ function BillModal({ bill, onClose, onMarkPaid }) {
               <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--gray-900)' }}>{bill.patient_name}</div>
               <div style={{ fontSize: '0.8rem', color: 'var(--gray-500)' }}>{bill.patient_id}</div>
               {bill.payment_method && <div style={{ fontSize: '0.8rem', color: 'var(--primary-600)', marginTop: '0.25rem', fontWeight: 600 }}>Payment: {bill.payment_method}</div>}
+              {cancelled && (
+                <div style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>
+                  Cancelled: {bill.cancel_reason}{Number(bill.refunded_amount) > 0 && ` · Refunded Rs ${Number(bill.refunded_amount).toLocaleString()}`}
+                </div>
+              )}
             </div>
             <span style={{ background: STATUS_STYLES[bill.status]?.bg, color: STATUS_STYLES[bill.status]?.color, fontSize: '0.875rem', fontWeight: 700, padding: '0.375rem 0.875rem', borderRadius: 999, alignSelf: 'flex-start' }}>
               {STATUS_STYLES[bill.status]?.label || bill.status}
@@ -45,21 +77,74 @@ function BillModal({ bill, onClose, onMarkPaid }) {
             {[
               ['Total Amount', `Rs ${total.toLocaleString()}`],
               ['Amount Paid', `Rs ${paid.toLocaleString()}`],
-              ['Balance Due', `Rs ${balance.toLocaleString()}`],
+              ['Balance Due', `Rs ${(cancelled ? 0 : balance).toLocaleString()}`],
             ].map(([label, val], i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: i === 2 && balance > 0 ? '#dc2626' : 'var(--gray-600)' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: i === 2 && balance > 0 && !cancelled ? '#dc2626' : 'var(--gray-600)' }}>
                 <span>{label}</span><span style={{ fontWeight: i === 2 ? 800 : 600 }}>{val}</span>
               </div>
             ))}
           </div>
+
+          {mode === 'pay' && (
+            <div className="grid grid-2" style={{ gap: '1rem', marginTop: '1.25rem', padding: '1rem', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-lg)' }}>
+              <div className="form-group">
+                <label className="form-label">Amount received (max Rs {balance.toLocaleString()})</label>
+                <input className="form-input" type="number" min="1" max={balance} value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Method</label>
+                <select className="form-input form-select" value={pay.payment_method} onChange={e => setPay(p => ({ ...p, payment_method: e.target.value }))}>
+                  {PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+          {mode === 'edit' && (
+            <div className="grid grid-2" style={{ gap: '1rem', marginTop: '1.25rem', padding: '1rem', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-lg)' }}>
+              <div className="form-group">
+                <label className="form-label">Total amount (Rs)</label>
+                <input className="form-input" type="number" min={paid || 1} value={edit.total_amount} onChange={e => setEdit(p => ({ ...p, total_amount: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bill type</label>
+                <input className="form-input" value={edit.type} onChange={e => setEdit(p => ({ ...p, type: e.target.value }))} />
+              </div>
+            </div>
+          )}
+          {mode === 'cancel' && (
+            <div className="grid grid-2" style={{ gap: '1rem', marginTop: '1.25rem', padding: '1rem', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius-lg)' }}>
+              <div className="form-group" style={{ gridColumn: paid > 0 ? 'auto' : '1 / -1' }}>
+                <label className="form-label">Reason for cancellation *</label>
+                <input className="form-input" value={cancel.reason} onChange={e => setCancel(c => ({ ...c, reason: e.target.value }))} placeholder="e.g. Billed to wrong patient" />
+              </div>
+              {paid > 0 && (
+                <div className="form-group">
+                  <label className="form-label">Refund to patient (max Rs {paid.toLocaleString()})</label>
+                  <input className="form-input" type="number" min="0" max={paid} value={cancel.refund_amount} onChange={e => setCancel(c => ({ ...c, refund_amount: e.target.value }))} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
-          {bill.status !== 'Paid' && (
-            <button className="btn btn-teal" onClick={() => onMarkPaid(bill.id)}>
-              <CheckCircle size={14} /> Mark as Paid
-            </button>
+          {!mode && !cancelled && (
+            <>
+              {paid === 0
+                ? <button className="btn btn-ghost" style={{ color: '#dc2626', marginRight: 'auto' }} onClick={deleteBill} disabled={busy}><Trash2 size={14} /> Delete</button>
+                : <button className="btn btn-ghost" style={{ color: '#dc2626', marginRight: 'auto' }} onClick={() => setMode('cancel')}><Ban size={14} /> Cancel / Refund</button>}
+              <button className="btn btn-secondary" onClick={() => setMode('edit')}><Pencil size={14} /> Edit</button>
+              {balance > 0 && (
+                <button className="btn btn-teal" onClick={() => setMode('pay')}>
+                  <CreditCard size={14} /> Record Payment
+                </button>
+              )}
+            </>
           )}
+          {!mode && cancelled && <button className="btn btn-secondary" onClick={onClose}>Close</button>}
+          {mode && <button className="btn btn-secondary" onClick={() => setMode(null)} disabled={busy}>Back</button>}
+          {mode === 'pay' && <button className="btn btn-teal" onClick={recordPayment} disabled={busy || !(Number(pay.amount) > 0)}>{busy ? <Loader size={14} className="spin" /> : <CheckCircle size={14} />} Save Payment</button>}
+          {mode === 'edit' && <button className="btn btn-primary" onClick={saveEdit} disabled={busy}>{busy ? <Loader size={14} className="spin" /> : <CheckCircle size={14} />} Save</button>}
+          {mode === 'cancel' && <button className="btn btn-danger" style={{ background: '#dc2626', color: '#fff' }} onClick={cancelBill} disabled={busy || !cancel.reason.trim()}>{busy ? <Loader size={14} className="spin" /> : <Ban size={14} />} Cancel Bill</button>}
         </div>
       </div>
     </div>
@@ -192,16 +277,14 @@ export default function Billing() {
 
   const handleSave = (bill) => setBills(b => [bill, ...b])
 
-  const handleMarkPaid = async (id) => {
-    try {
-      const updated = await api.updateBilling(id, { status: 'Paid', paid_amount: bills.find(b => b.id === id)?.total_amount })
-      setBills(b => b.map(bill => bill.id === id ? { ...bill, ...updated } : bill))
-      setSelectedBill(null)
-    } catch (e) { alert('Failed to update: ' + e.message) }
+  const handleUpdated = (updated) => {
+    setBills(b => b.map(bill => bill.id === updated.id ? updated : bill))
+    setSelectedBill(updated)
   }
 
-  const totalRevenue = bills.filter(b => b.status === 'Paid').reduce((s, b) => s + Number(b.total_amount || 0), 0)
-  const totalPending = bills.filter(b => b.status === 'Pending').reduce((s, b) => s + Number(b.total_amount || 0) - Number(b.paid_amount || 0), 0)
+  // Collected money counts partial payments too; cancelled bills are excluded
+  const totalRevenue = bills.filter(b => b.status !== 'Cancelled').reduce((s, b) => s + Number(b.paid_amount || 0) - Number(b.refunded_amount || 0), 0)
+  const totalPending = bills.filter(b => b.status === 'Pending' || b.status === 'Partial').reduce((s, b) => s + Number(b.total_amount || 0) - Number(b.paid_amount || 0), 0)
 
   return (
     <>
@@ -294,7 +377,8 @@ export default function Billing() {
         </div>
 
     </div>
-    {selectedBill && <BillModal bill={selectedBill} onClose={() => setSelectedBill(null)} onMarkPaid={handleMarkPaid} />}
+    {selectedBill && <BillModal key={selectedBill.id + selectedBill.status + selectedBill.paid_amount} bill={selectedBill} onClose={() => setSelectedBill(null)}
+      onUpdated={handleUpdated} onDeleted={id => setBills(b => b.filter(x => x.id !== id))} />}
     {showModal && <NewBillModal patients={patients} onClose={() => setShowModal(false)} onSave={handleSave} />}
     </>
   )

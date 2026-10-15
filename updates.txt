@@ -1,0 +1,84 @@
+I've fixed everything from the audit. All 33 end-to-end checks passed against the dev server, the frontend builds, and I removed the test data afterwards. The backend restarted itself (--watch), so the database changes are already applied.
+
+1. Pages that only pretended to save now save to the database
+
+┌────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│             Module             │                                                                                                  What changed                                                                                                  │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Patient Merge                  │ Merge is real now. Every linked record (visits, labs, bills, forms, notes and so on) moves to the patient you keep, their blank details are filled from the duplicate, and the duplicate is removed. All in    │
+│                                │ one step, and it's logged.                                                                                                                                                                                     │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Pharmacy → GRN                 │ Receiving goods saves the GRN and adds the quantities to stock; MRP and expiry, if entered, update the drug. The GRN list shows real records instead of the hard-coded rows.                                   │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Pharmacy → Suppliers / IP      │ These were empty tabs. Suppliers can now be added, edited and deleted. A ward return puts the medicine back in stock and records the refund value.                                                             │
+│ Returns                        │                                                                                                                                                                                                                │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Operation Theatre              │ Removed the fake surgeries. You can schedule, edit, clear PAC, start, complete, cancel and delete, with a date filter.                                                                                         │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ TPA claims                     │ Removed the random fake claims. Create, update (with remarks) and delete are saved.                                                                                                                            │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Queue                          │ Tokens are stored on the server and numbered per department per day. The list refreshes every 15 seconds, so other counters and the display board see the same queue. Skipped tokens can be re-queued or       │
+│                                │ removed.                                                                                                                                                                                                       │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Medical Records requests       │ Create, approve, reject, mark ready and delete are saved.                                                                                                                                                      │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Emergency board                │ ER visits are saved; triage and disposition changes stick after a refresh.                                                                                                                                     │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Health Packages                │ Create, edit and remove packages. Booking one can also raise a bill, and bookings can be completed or cancelled.                                                                                               │
+├────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Settings                       │ Notification, security, appearance and backup preferences are now saved for the hospital. The two-factor toggle is greyed out with "Not available yet", so it no longer suggests protection that doesn't       │
+│                                │ exist.                                                                                                                                                                                                         │
+└────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+2. Edit and delete buttons added where the server already supported them
+
+- Doctors: edit and delete. A doctor linked to patient records can't be deleted; set them "On Leave" instead.
+- Patients: delete, only for patients registered by mistake with no history. Otherwise it explains why and points to Merge.
+- Staff: edit name, role, department, phone and email; reset password; delete.
+- Discharge templates and form templates: rename and change category. Form template upload, edit and delete are now admin-only on the server, and the buttons are hidden for other staff.
+
+3. Missing operations added
+
+- Clinical notes: edit and delete.
+- Lab and radiology orders: delete an order placed by mistake (completed results can't be deleted).
+- OPD visits and appointments: edit, reschedule and delete.
+- Billing: record part-payments (overpaying is blocked), edit the amount, cancel with a reason and refund, and delete a bill that has no payments.
+- Inventory: edit any field and correct stock, and delete items.
+- Beds: edit ward, type and status.
+- Patient forms and discharge summaries: remove one assigned to the wrong patient.
+- Settings → Branding: remove the logo, header or footer image.
+- Nursing: delete entries made in error, and stop or mark the next dose for medications.
+- IP billing: delete a wrong charge or advance, and remove a package.
+
+4. Data moved to its own tables, with the counts now correct
+
+- Nursing charts, IP billing and blood bank data now have their own tables, and the old rows were moved there automatically.
+- The pending-notes badge dropped from 49 to the true number (2 right now), and the Clinical Notes page shows only clinical notes.
+- Blood stock is out of the pharmacy list. Issuing blood takes the units from stock in the same save, and a request can't be issued twice.
+- One thing to know about the moved data: the old Blood Bank page added a new row for every status change, so its 31 rows were duplicates of the same requests. They became 3 requests, each keeping its latest status.
+
+5. Bugs found while testing
+
+- Registering a patient with the default blood group failed. The default is "Unknown", which didn't fit the database column. Fixed.
+- About 22 registration fields were silently thrown away on save (DOB, Aadhaar, ABHA, guardian, insurance, MLC and others). They're stored now, and they also reach the form auto-fill.
+- Invoice numbers came out as INV-NaN after a pharmacy sale. Fixed.
+- Appointments booked for a future date were saved with today's date. Fixed.
+- Dates came back one day early because of the IST offset. Fixed.
+- A lab status update wiped the result notes. Fixed.
+- Modals on every page could open far down the page, the same problem the Register Patient window had. Fixed once in the CSS for all of them.
+- Cancelled bills are no longer counted in revenue on the dashboard and reports.
+
+6. Security and audit trail
+
+- Audit trail: every create, update and delete by a signed-in user is now logged with who did it and what changed. Before, only patient create and delete were logged. The Audit Log page shows each type with a matching badge.
+- Login required: the patient-form endpoints now require login and only show your own hospital's forms.
+- Edits only change allowed fields: the server ignores any other field names sent with an edit, which previously could have been used to change arbitrary columns.
+- QR codes and barcodes are now drawn inside the app (I added the qrcode and jsbarcode packages). Patient IDs and details are no longer sent to outside websites.
+
+Still not done
+
+- A few buttons still do nothing: Medical Records "Print Summary" and "Download Records", the Doctors card "Call" and "Schedule", and the hospital QR "Download" and "Print A4". I removed the bill window's "Download PDF" button, which also did nothing.
+- Saved preferences such as theme and session timeout are stored but don't change how the app behaves yet.
+- The hospital QR still has "CURA HOSPITAL" written into it instead of using your hospital's name.
+
+Nothing is committed. Most of the new code is in server/resources.js, plus five new shared components in src/components/.

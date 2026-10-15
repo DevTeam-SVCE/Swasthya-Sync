@@ -5,11 +5,12 @@ import {
   Activity, Phone, Droplets, BedDouble, Calendar, ChevronRight,
   CheckCircle, FolderOpen, AlertTriangle, Shield, UserCheck,
   CreditCard, MapPin, Users, Hash, Printer, Download,
-  ChevronDown, RefreshCw, Filter
+  ChevronDown, RefreshCw, Filter, Trash2
 } from 'lucide-react'
 import { api } from '../api'
 import FormViewer from '../components/FormViewer'
 import DischargeEditor from '../components/DischargeEditor'
+import DateInput from '../components/DateInput'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']
@@ -48,6 +49,43 @@ const STATUS_STYLES = {
   'Under Obs': { bg: 'rgba(245,158,11,0.1)', color: '#b45309' },
   Serious:     { bg: 'rgba(239,68,68,0.15)',  color: '#b91c1c' },
   Discharged:  { bg: 'rgba(100,116,139,0.1)', color: '#475569' },
+}
+
+// Status badge that doubles as a dropdown; the change is saved straight away
+function StatusSelect({ patient, onChange, onDark = false }) {
+  const [saving, setSaving] = useState(false)
+  const st = STATUS_STYLES[patient.status] || {}
+  const change = async (e) => {
+    const status = e.target.value
+    if (status === patient.status) return
+    if (status === 'Discharged' && !window.confirm(`Mark ${patient.name} as Discharged?`)) return
+    setSaving(true)
+    try {
+      const updated = await api.updatePatient(patient.id, { status })
+      onChange({ ...patient, ...updated })
+    } catch (err) { alert('Could not change status: ' + err.message) } finally { setSaving(false) }
+  }
+  return (
+    <select
+      value={patient.status || ''}
+      onChange={change}
+      onClick={e => e.stopPropagation()}
+      disabled={saving}
+      title="Change status"
+      style={{
+        appearance: 'none', WebkitAppearance: 'none', border: 'none', cursor: saving ? 'wait' : 'pointer',
+        color: st.color || 'var(--gray-700)',
+        fontSize: '0.65rem', fontWeight: 700, padding: '0.2rem 1.1rem 0.2rem 0.5rem', borderRadius: 999,
+        textTransform: 'uppercase', whiteSpace: 'nowrap', opacity: saving ? 0.6 : 1,
+        backgroundImage: 'linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%)',
+        backgroundPosition: 'calc(100% - 8px) 55%, calc(100% - 5px) 55%', backgroundSize: '3px 3px, 3px 3px', backgroundRepeat: 'no-repeat',
+        backgroundColor: onDark || !st.bg ? 'rgba(255,255,255,0.9)' : st.bg,
+      }}
+    >
+      {patient.status && !STATUS_STYLES[patient.status] && <option value={patient.status}>{patient.status}</option>}
+      {Object.keys(STATUS_STYLES).map(s => <option key={s} value={s}>{s}</option>)}
+    </select>
+  )
 }
 
 const FORM_STATUS = {
@@ -209,7 +247,12 @@ function RegisterModal({ doctors, onClose, onSave, patient = null }) {
     try {
       const allowedKeys = [
         'name', 'age', 'gender', 'blood_group', 'department', 'doctor_id',
-        'phone', 'email', 'address', 'status', 'admission_type', 'notes'
+        'phone', 'email', 'address', 'status', 'admission_type', 'notes',
+        // kept in the patient's details record
+        'dob', 'alt_phone', 'aadhaar', 'abha_id', 'city', 'state', 'pincode', 'religion',
+        'marital_status', 'patient_category', 'guardian_name', 'guardian_relation', 'guardian_phone',
+        'mlc_type', 'mlc_police_info', 'referred_by', 'referral_hospital',
+        'payment_type', 'insurance_company', 'tpa_name', 'policy_no', 'validity',
       ]
       const payload = {}
       allowedKeys.forEach(k => {
@@ -231,7 +274,7 @@ function RegisterModal({ doctors, onClose, onSave, patient = null }) {
 
   const isInsurance = form.payment_type === 'Insurance / TPA'
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 780, width: '95vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
 
@@ -293,7 +336,7 @@ function RegisterModal({ doctors, onClose, onSave, patient = null }) {
                   </select>
                 </F>
                 <F label="Age" required error={fieldErrors.age}><input className="form-input" type="number" min="0" max="120" placeholder="Years" value={form.age} onChange={e => set('age', e.target.value)} /></F>
-                <F label="Date of Birth"><input className="form-input" type="date" value={form.dob} onChange={e => set('dob', e.target.value)} /></F>
+                <F label="Date of Birth"><DateInput value={form.dob} max={new Date().toISOString().slice(0, 10)} onChange={v => set('dob', v)} /></F>
                 <F label="Gender">
                   <select className="form-input form-select" value={form.gender} onChange={e => set('gender', e.target.value)}>
                     {GENDERS.map(g => <option key={g}>{g}</option>)}
@@ -534,12 +577,13 @@ function RegisterModal({ doctors, onClose, onSave, patient = null }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
 // ─── Patient Detail Side Panel ────────────────────────────────────────────────
-function PatientPanel({ patient, onClose, onEdit }) {
+function PatientPanel({ patient, onClose, onEdit, onStatusChange }) {
   const [tab, setTab] = useState('overview')
   const [forms, setForms] = useState([])
   const [templates, setTemplates] = useState([])
@@ -569,13 +613,18 @@ function PatientPanel({ patient, onClose, onEdit }) {
       }).catch(console.error).finally(() => setLoadingDischarge(false))
   }, [tab, patient.id])
 
+  // Assign a form to this patient and add it to the list (also used by the viewer's Records panel)
+  const createForm = async (template) => {
+    const form = await api.createPatientForm({ template_id: template.id, patient_id: patient.id, filled_by: '' })
+    const enriched = { ...form, template_name: template.name, category: template.category, file_path: template.file_path, file_name: template.file_name, page_count: template.page_count, layout: template.layout, type: 'form' }
+    setForms(prev => [enriched, ...prev])
+    return enriched
+  }
+
   const handleAssign = async (template) => {
     setAssigningId(template.id)
     try {
-      const form = await api.createPatientForm({ template_id: template.id, patient_id: patient.id, filled_by: '' })
-      const enriched = { ...form, template_name: template.name, category: template.category, file_path: template.file_path, file_name: template.file_name, type: 'form' }
-      setForms(prev => [enriched, ...prev])
-      setOpenForm(enriched)
+      setOpenForm(await createForm(template))
     } catch (e) { alert('Failed: ' + e.message) } finally { setAssigningId(null) }
   }
 
@@ -589,9 +638,27 @@ function PatientPanel({ patient, onClose, onEdit }) {
     } catch (e) { alert('Failed: ' + e.message) } finally { setAssigningDischargeId(null) }
   }
 
-  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus) => {
-    if (!openForm) return
-    const updater = f => f && f.id === openForm.id ? { ...f, annotations: updatedAnnotations, status: newStatus || f.status } : f
+  const handleRemoveForm = async (form) => {
+    const filled = form.status && form.status !== 'blank'
+    if (!window.confirm(`Remove "${form.template_name}" from this patient?${filled ? ' Everything written on it will be lost.' : ''}`)) return
+    try {
+      await api.deletePatientForm(form.id)
+      setForms(prev => prev.filter(f => f.id !== form.id))
+    } catch (e) { alert('Failed: ' + e.message) }
+  }
+
+  const handleRemoveDischarge = async (s) => {
+    if (!window.confirm(`Remove "${s.template_name}" from this patient? Its contents will be lost.`)) return
+    try {
+      await api.deleteDischargeSummary(s.id)
+      setDischargeSummaries(prev => prev.filter(x => x.id !== s.id))
+    } catch (e) { alert('Failed: ' + e.message) }
+  }
+
+  const handleAnnotationsSaved = useCallback((updatedAnnotations, newStatus, formId) => {
+    const id = formId ?? openForm?.id
+    if (!id) return
+    const updater = f => f && f.id === id ? { ...f, annotations: updatedAnnotations, status: newStatus || f.status } : f
     setForms(prev => (prev || []).map(updater))
     setDischargeSummaries(prev => (prev || []).map(updater))
   }, [openForm])
@@ -637,6 +704,7 @@ function PatientPanel({ patient, onClose, onEdit }) {
             onAnnotationsSaved={handleAnnotationsSaved}
             allForms={[...(forms || []).map(f => ({ ...f, type: 'form' }))].map(f => ({ ...f, patient_name: patient.name }))}
             onSwitchForm={(f) => setOpenForm(f)}
+            onAddForm={async (t) => ({ ...(await createForm(t)), patient_name: patient.name })}
           />
         </div>,
         document.body
@@ -660,7 +728,7 @@ function PatientPanel({ patient, onClose, onEdit }) {
               </div>
               <div style={{ display: 'flex', gap: '0.375rem', marginTop: '0.375rem', flexWrap: 'wrap' }}>
                 <span style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 999 }}>{patient.admission_type}</span>
-                <span style={{ background: STATUS_STYLES[patient.status]?.bg || 'rgba(255,255,255,0.15)', color: STATUS_STYLES[patient.status]?.color || '#fff', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 999 }}>{patient.status}</span>
+                <StatusSelect patient={patient} onChange={onStatusChange} onDark />
                 {patient.blood_group && <span style={{ background: 'rgba(239,68,68,0.3)', color: '#fca5a5', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 999 }}>{patient.blood_group}</span>}
               </div>
             </div>
@@ -809,6 +877,9 @@ function PatientPanel({ patient, onClose, onEdit }) {
                             <button onClick={e => { e.stopPropagation(); setOpenForm(form) }} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--primary-600)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.35rem 0.625rem', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer' }}>
                               <Pen size={11} /> Open
                             </button>
+                            <button onClick={e => { e.stopPropagation(); handleRemoveForm(form) }} title="Remove form from patient" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-400)', padding: 4, display: 'flex' }}>
+                              <Trash2 size={13} />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -884,6 +955,11 @@ function PatientPanel({ patient, onClose, onEdit }) {
                             <button onClick={() => setOpenForm({ ...s, type: 'discharge' })} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: '#059669', color: '#fff', border: 'none', borderRadius: 6, padding: '0.35rem 0.625rem', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer' }}>
                               <Pen size={11} /> {s.approved_by ? 'View' : 'Open'}
                             </button>
+                            {!s.approved_by && (
+                              <button onClick={() => handleRemoveDischarge(s)} title="Remove summary from patient" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-400)', padding: 4, display: 'flex' }}>
+                                <Trash2 size={13} />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -954,9 +1030,24 @@ export default function Patients() {
   }, [fetchData])
 
   const handleSave = (newPatient) => setPatients(p => [newPatient, ...p])
+
+  const handleStatusChange = (updated) => {
+    setPatients(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p))
+    setSelectedPatient(sp => sp?.id === updated.id ? { ...sp, ...updated } : sp)
+  }
+
+  // Only works for records with no visits / bills / results — the server explains otherwise
+  const handleDelete = async (p) => {
+    if (!window.confirm(`Delete patient ${p.name} (${p.id})? This cannot be undone.`)) return
+    try {
+      await api.deletePatient(p.id)
+      setPatients(prev => prev.filter(x => x.id !== p.id))
+      if (selectedPatient?.id === p.id) setSelectedPatient(null)
+    } catch (e) { alert(e.message) }
+  }
   const panelOpen = !!selectedPatient
 
-  const FILTERS = ['All', 'IPD', 'OPD', 'Emergency', 'Critical', 'Stable', 'Recovering']
+  const FILTERS = ['All', 'IPD', 'OPD', 'Emergency', 'Critical', 'Serious', 'Under Obs', 'Stable', 'Recovering', 'Discharged']
 
   // Stats summary
   const ipd = patients.filter(p => p.admission_type === 'IPD').length
@@ -1089,9 +1180,7 @@ export default function Patients() {
                       </>
                     )}
                     <td>
-                      <span style={{ background: STATUS_STYLES[p.status]?.bg, color: STATUS_STYLES[p.status]?.color, fontSize: '0.65rem', fontWeight: 700, padding: '0.2rem 0.45rem', borderRadius: 999, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                        {p.status}
-                      </span>
+                      <StatusSelect patient={p} onChange={handleStatusChange} />
                     </td>
                     <td onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
@@ -1107,6 +1196,12 @@ export default function Patients() {
                           title="Edit Details"
                           onClick={() => setEditPatient(p)}>
                           <Pen size={12} color="var(--gray-500)" />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-icon-sm"
+                          title="Delete patient (only if registered by mistake)"
+                          onClick={() => handleDelete(p)}>
+                          <Trash2 size={12} color="#dc2626" />
                         </button>
                       </div>
                     </td>
@@ -1134,6 +1229,7 @@ export default function Patients() {
             patient={selectedPatient}
             onClose={() => setSelectedPatient(null)}
             onEdit={(p) => setEditPatient(p)}
+            onStatusChange={handleStatusChange}
           />
         )}
       </div>
