@@ -556,25 +556,62 @@ app.patch('/api/patients/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-// DELETE /api/patients/:id — only for records with no clinical / billing history
-// (registered by mistake). Records with history should be merged instead.
+// Delete rows of `table` matching `where`, first clearing any rows elsewhere that point at
+// them through a foreign key without ON DELETE CASCADE / SET NULL (nullable refs are
+// nulled, required refs are deleted recursively).
+async function cascadeDelete(db, table, where, params, depth = 0) {
+  if (depth > 6) throw new Error(`Cascade too deep at ${table}`)
+  const { rows: refs } = await db.query(
+    `SELECT ch.relname AS child, ca.attname AS child_col, pa.attname AS parent_col, NOT ca.attnotnull AS nullable
+     FROM pg_constraint c
+     JOIN pg_class ch ON ch.oid = c.conrelid
+     JOIN pg_class pt ON pt.oid = c.confrelid
+     JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = c.conkey[1]
+     JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = c.confkey[1]
+     WHERE c.contype = 'f' AND array_length(c.conkey, 1) = 1 AND c.confdeltype IN ('a', 'r')
+       AND pt.relname = $1 AND pt.relnamespace = 'public'::regnamespace`, [table])
+  for (const r of refs) {
+    const { rows } = await db.query(`SELECT DISTINCT ${r.parent_col} AS v FROM ${table} WHERE ${where}`, params)
+    const vals = rows.map(x => x.v).filter(v => v !== null)
+    if (!vals.length) continue
+    if (r.nullable) await db.query(`UPDATE ${r.child} SET ${r.child_col} = NULL WHERE ${r.child_col} = ANY($1)`, [vals])
+    else await cascadeDelete(db, r.child, `${r.child_col} = ANY($1)`, [vals], depth + 1)
+  }
+  await db.query(`DELETE FROM ${table} WHERE ${where}`, params)
+}
+
+// DELETE /api/patients/:id — a patient with clinical / billing history is refused with
+// 409 + `linked` unless ?cascade=1, which removes the patient and every linked record.
 app.delete('/api/patients/:id', requireAuth, async (req, res) => {
+  const c = await pool.connect()
   try {
-    const hid = req.user.hospitalId
-    const { rows: [p] } = await pool.query('SELECT name FROM patients WHERE id = $1 AND hospital_id = $2', [req.params.id, hid])
+    const hid = req.user.hospitalId, id = req.params.id
+    const { rows: [p] } = await c.query('SELECT name FROM patients WHERE id = $1 AND hospital_id = $2', [id, hid])
     if (!p) return res.status(404).json({ error: 'Patient not found' })
+    const tables = await patientLinkedTables(c)
     const linked = []
-    for (const t of await patientLinkedTables(pool)) {
-      const { rows: [{ count }] } = await pool.query(`SELECT COUNT(*) FROM ${t} WHERE patient_id = $1`, [req.params.id])
+    for (const t of tables) {
+      const { rows: [{ count }] } = await c.query(`SELECT COUNT(*) FROM ${t} WHERE patient_id = $1`, [id])
       if (+count && !['patient_forms', 'patient_discharge_summaries', 'queue_tokens'].includes(t)) linked.push(`${count} ${t.replace(/_/g, ' ')}`)
     }
-    if (linked.length) {
-      return res.status(409).json({ error: `Cannot delete: this patient has ${linked.join(', ')}. Use Patient Merge if this is a duplicate.` })
+    if (linked.length && req.query.cascade !== '1') {
+      return res.status(409).json({ error: `This patient has ${linked.join(', ')}.`, linked })
     }
-    await pool.query('DELETE FROM patients WHERE id = $1 AND hospital_id = $2', [req.params.id, hid])
+    await c.query('BEGIN')
+    // Free any bed the patient occupies rather than deleting the bed
+    await c.query(
+      `UPDATE beds SET status = 'available', patient_id = NULL, doctor_id = NULL, diagnosis = NULL, has_alert = false
+       WHERE patient_id = $1 AND hospital_id = $2`, [id, hid])
+    for (const t of tables.filter(t => t !== 'beds')) await cascadeDelete(c, t, 'patient_id = $1', [id])
+    await cascadeDelete(c, 'patients', 'id = $1 AND hospital_id = $2', [id, hid])
+    await c.query('COMMIT')
     res.json({ success: true })
-    logAudit(req, 'PATIENT_DELETED', 'patients', req.params.id, `Patient "${p.name}" deleted`)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+    logAudit(req, 'PATIENT_DELETED', 'patients', id,
+      `Patient "${p.name}" deleted${linked.length ? ` with all linked records (${linked.join(', ')})` : ''}`)
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => {})
+    res.status(500).json({ error: e.message })
+  } finally { c.release() }
 })
 
 // POST /api/patients/:id/merge { duplicate_id } — move every linked record from the

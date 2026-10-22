@@ -865,7 +865,7 @@ function PatientInfoSidebar({ patientData, onClose, onStampField }) {
   )
 }
 
-export default function FormViewer({ formInstance, allForms = [], patientData, onClose, onAnnotationsSaved, onSwitchForm, onAddForm }) {
+export default function FormViewer({ formInstance, allForms = [], patientData, onClose, onAnnotationsSaved, onSwitchForm, onAddForm, onFormDeleted }) {
   const [pdfDoc, setPdfDoc] = useState(null)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -1255,6 +1255,22 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
   const formIdx = navForms.findIndex(f => f.id === formInstance.id)
   const hasNextForm = !!onSwitchForm && formIdx !== -1 && formIdx < navForms.length - 1
   const hasPrevForm = !!onSwitchForm && formIdx > 0
+  // Records panel delete: unassign the form from the patient. If it was the open one, move to the
+  // next form in the list (or the previous one), or close the viewer when it was the last.
+  const deleteFormFromPanel = useCallback(async (f) => {
+    await api.deletePatientForm(f.id)
+    formDrafts.delete(f.id)
+    if (f.id === formInstance.id) {
+      const i = navForms.findIndex(x => x.id === f.id)
+      const next = navForms[i + 1] || navForms[i - 1]
+      if (next) {
+        reopenRecordsPanel = true
+        switchingToFormId = next.id
+        onSwitchForm(next)
+      } else onClose()
+    }
+    onFormDeleted(f.id)
+  }, [formInstance.id, navForms, onSwitchForm, onClose, onFormDeleted])
   const canGoNext = page < totalPages || hasNextForm
   const canGoPrev = page > 1 || hasPrevForm
 
@@ -1740,6 +1756,7 @@ export default function FormViewer({ formInstance, allForms = [], patientData, o
             onSelect={switchToForm}
             onAddForm={onAddForm ? addFormFromPanel : undefined}
             onAddForms={onAddForm ? addFormsFromPanel : undefined}
+            onDeleteForm={onFormDeleted ? deleteFormFromPanel : undefined}
             onClose={() => setShowFormsQueue(false)}
           />
         )}

@@ -705,6 +705,7 @@ function PatientPanel({ patient, onClose, onEdit, onStatusChange }) {
             allForms={[...(forms || []).map(f => ({ ...f, type: 'form' }))].map(f => ({ ...f, patient_name: patient.name }))}
             onSwitchForm={(f) => setOpenForm(f)}
             onAddForm={async (t) => ({ ...(await createForm(t)), patient_name: patient.name })}
+            onFormDeleted={(id) => setForms(prev => prev.filter(f => f.id !== id))}
           />
         </div>,
         document.body
@@ -1036,11 +1037,21 @@ export default function Patients() {
     setSelectedPatient(sp => sp?.id === updated.id ? { ...sp, ...updated } : sp)
   }
 
-  // Only works for records with no visits / bills / results — the server explains otherwise
+  // If the patient has visits / notes / bills etc. the server returns 409 + `linked`;
+  // after a second confirmation everything is cascade-deleted.
   const handleDelete = async (p) => {
     if (!window.confirm(`Delete patient ${p.name} (${p.id})? This cannot be undone.`)) return
     try {
-      await api.deletePatient(p.id)
+      try {
+        await api.deletePatient(p.id)
+      } catch (e) {
+        if (e.status !== 409) throw e
+        const msg = `${p.name} (${p.id}) has ${e.data.linked.join(', ')}.\n\n` +
+          'Deleting will permanently remove this patient from EVERYWHERE — OPD, IPD, clinical notes, ' +
+          'labs, billing and all other records. Continue?'
+        if (!window.confirm(msg)) return
+        await api.deletePatient(p.id, true)
+      }
       setPatients(prev => prev.filter(x => x.id !== p.id))
       if (selectedPatient?.id === p.id) setSelectedPatient(null)
     } catch (e) { alert(e.message) }
