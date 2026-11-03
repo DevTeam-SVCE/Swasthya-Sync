@@ -727,6 +727,7 @@ export default function IPD() {
             allForms={(patientForms || []).map(f => ({ ...f, type: 'form', patient_name: selected.patient_name }))}
             onSwitchForm={(f) => setActiveForm(f)}
             onAddForm={async (t) => ({ ...(await createForm(t)), type: 'form', patient_name: selected.patient_name })}
+            onFormDeleted={(id) => setPatientForms(prev => prev.filter(f => f.id !== id))}
           />
         </div>,
         document.body

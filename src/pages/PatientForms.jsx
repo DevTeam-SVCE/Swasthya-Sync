@@ -207,6 +207,7 @@ export default function PatientForms() {
             onAnnotationsSaved={handleAnnotationsSaved}
             allForms={patientForms.map(f => ({ ...f, type: 'form', patient_name: selectedPatient?.name }))}
             onSwitchForm={(f) => setOpenForm(f)}
+            onFormDeleted={(id) => setPatientForms(prev => prev.filter(f => f.id !== id))}
             onAddForm={async (t) => {
               const form = await api.createPatientForm({ template_id: t.id, patient_id: selectedPatient.id, filled_by: '' })
               const enriched = { ...form, template_name: t.name, category: t.category, file_path: t.file_path, file_name: t.file_name, page_count: t.page_count, layout: t.layout }

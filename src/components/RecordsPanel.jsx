@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { MoreVertical, Plus, ChevronLeft, Paperclip, PlusSquare, Search, Loader, ChevronDown, Check } from 'lucide-react'
+import { MoreVertical, Plus, ChevronLeft, Paperclip, PlusSquare, Search, Loader, ChevronDown, Check, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import AttachmentsView from './AttachmentsView'
 
 // Slide-over "Records" panel for the form viewer: the patient's forms grouped by category,
-// the open one highlighted, plus Attachments (uploaded lab / radiology reports) and Add Records.
+// the open one highlighted (each with a delete button on hover), plus Attachments (uploaded lab / radiology reports) and Add Records.
 
 const GREEN = '#7dd87d'
 const GREEN_DARK = '#16a34a'
@@ -49,7 +49,7 @@ export function arrangeRecords(forms, sort = 'assigned') {
   return { labels, groups }
 }
 
-export default function RecordsPanel({ forms, activeId, activePages, patientId, sort = 'assigned', onSortChange, onSelect, onAddForm, onAddForms, onClose }) {
+export default function RecordsPanel({ forms, activeId, activePages, patientId, sort = 'assigned', onSortChange, onSelect, onAddForm, onAddForms, onDeleteForm, onClose }) {
   const [view, setView] = useState('list') // 'list' | 'add' | 'attachments'
   const [menuOpen, setMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(new Set())
@@ -82,6 +82,16 @@ export default function RecordsPanel({ forms, activeId, activePages, patientId, 
     } catch (e) { setCopyError(e.message) } finally { setCopying(false) }
   }
 
+  const [deletingId, setDeletingId] = useState(null)
+  const [deleteError, setDeleteError] = useState(null)
+
+  const deleteForm = async (f, label, filled) => {
+    if (deletingId) return
+    if (!window.confirm(`Delete "${label}" from this patient?${filled ? ' Everything written on it will be lost.' : ''} This cannot be undone.`)) return
+    setDeletingId(f.id); setDeleteError(null)
+    try { await onDeleteForm(f) } catch (e) { setDeleteError(e.message) } finally { setDeletingId(null) }
+  }
+
   const { labels, groups } = arrangeRecords(forms, sort)
   const toggleGroup = (cat) => setCollapsed(prev => {
     const next = new Set(prev)
@@ -95,6 +105,10 @@ export default function RecordsPanel({ forms, activeId, activePages, patientId, 
         @keyframes recordsPanelIn { from { transform: translateX(-100%); } to { transform: none; } }
         .records-item:hover { background: #f1f5f1; }
         .records-link:hover { text-decoration: underline; }
+        .records-del { opacity: 0; transition: opacity 120ms, background 120ms; }
+        .records-row:hover .records-del, .records-del:focus-visible, .records-del.busy { opacity: 1; }
+        .records-del:hover { background: #fee2e2 !important; color: #dc2626 !important; }
+        @media (hover: none) { .records-del { opacity: 1; } }
       `}</style>
       {/* Click-away backdrop over the rest of the viewer */}
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,0.25)' }} />
@@ -142,6 +156,7 @@ export default function RecordsPanel({ forms, activeId, activePages, patientId, 
         {view === 'list' && (
           <>
             {copyError && <div style={{ margin: '0.5rem 1rem 0', color: '#dc2626', fontSize: '0.8rem' }}>Could not add a copy: {copyError}</div>}
+            {deleteError && <div style={{ margin: '0.5rem 1rem 0', color: '#dc2626', fontSize: '0.8rem' }}>Could not delete: {deleteError}</div>}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.75rem' }}>
               {forms.length === 0 && (
                 <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: '0.85rem', padding: '2rem 1rem' }}>No records yet</div>
@@ -160,7 +175,7 @@ export default function RecordsPanel({ forms, activeId, activePages, patientId, 
                       <div
                         key={f.id}
                         ref={active ? activeRef : undefined}
-                        className={active ? undefined : 'records-item'}
+                        className={active ? 'records-row' : 'records-row records-item'}
                         onClick={() => !active && onSelect(f)}
                         title={labels.get(f.id)}
                         style={{
@@ -185,6 +200,17 @@ export default function RecordsPanel({ forms, activeId, activePages, patientId, 
                             color: filled ? '#fff' : '#6b7280',
                           }}
                         >{pages}</span>
+                        {onDeleteForm && (
+                          <button
+                            className={`records-del${deletingId === f.id ? ' busy' : ''}`}
+                            onClick={e => { e.stopPropagation(); deleteForm(f, labels.get(f.id), filled) }}
+                            disabled={!!deletingId}
+                            title={`Delete ${labels.get(f.id)}`}
+                            style={{ ...iconBtn, width: 26, height: 26, margin: '-4px -6px -4px -4px', borderRadius: 999, flexShrink: 0, color: active ? '#14301a' : '#9ca3af', cursor: deletingId ? 'wait' : 'pointer' }}
+                          >
+                            {deletingId === f.id ? <Loader size={14} className="spin" /> : <Trash2 size={14} />}
+                          </button>
+                        )}
                       </div>
                     )
                   })}

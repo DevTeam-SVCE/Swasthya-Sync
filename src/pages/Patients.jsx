@@ -705,6 +705,7 @@ function PatientPanel({ patient, onClose, onEdit, onStatusChange }) {
             allForms={[...(forms || []).map(f => ({ ...f, type: 'form' }))].map(f => ({ ...f, patient_name: patient.name }))}
             onSwitchForm={(f) => setOpenForm(f)}
             onAddForm={async (t) => ({ ...(await createForm(t)), patient_name: patient.name })}
+            onFormDeleted={(id) => setForms(prev => prev.filter(f => f.id !== id))}
           />
         </div>,
         document.body
