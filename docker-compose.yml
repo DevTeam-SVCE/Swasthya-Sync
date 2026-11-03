@@ -33,8 +33,8 @@ services:
     volumes:
       # Data persistence for postgres
       - pgdata:/var/lib/postgresql/data
-      # Mount the schema / seed data we created earlier to auto-initialize!
-      - ./server/dscribe_hms_import.sql:/docker-entrypoint-initdb.d/init.sql
+      # Initialize with the same schema as the dev database (schema-only dump of swasthya_db)
+      - ./server/dev_schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
     restart: unless-stopped
 
 volumes:

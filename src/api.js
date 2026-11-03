@@ -24,7 +24,7 @@ async function request(method, path, body = null, isMultipart = false) {
   const res = await fetch(`${BASE_URL}${path}`, opts)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    throw Object.assign(new Error(err.error || res.statusText), { status: res.status, data: err })
   }
   return res.json()
 }
@@ -52,7 +52,7 @@ export const api = {
   getPatient: (id) => request('GET', `/patients/${id}`),
   createPatient: (data) => request('POST', '/patients', data),
   updatePatient: (id, data) => request('PATCH', `/patients/${id}`, data),
-  deletePatient: (id) => request('DELETE', `/patients/${id}`),
+  deletePatient: (id, cascade = false) => request('DELETE', `/patients/${id}${cascade ? '?cascade=1' : ''}`),
   mergePatients: (keepId, duplicateId) => request('POST', `/patients/${keepId}/merge`, { duplicate_id: duplicateId }),
 
   // Doctors
